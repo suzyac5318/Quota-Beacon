@@ -2,6 +2,18 @@
 
 本文件记录本仓库可核实的版本与开发里程碑。未创建 Git 提交或标签的工作统一标记为“未发布”，不追溯虚构版本号。
 
+## 1.5.5 — 2026-07-26
+
+### 修复
+
+- 历史累计 Token 扫描新增 `.codex/session-archive`，避免 Codex 将会话迁移到二级归档后累计值下降。
+- 新增会话文件迁移回归测试，确保迁移前后的累计 Token 和会话数量保持一致。
+
+### 验证
+
+- Rust 单元测试覆盖 `sessions` 到 `session-archive/stage2/...` 的迁移场景，迁移前后的累计 Token 和会话数量断言通过。
+- 前端测试、TypeScript/Vite 构建、Rust 检查、Windows Tauri release 构建与 Git 差异检查通过。
+
 ## 1.5.4 — 2026-07-17
 
 ### 文档

@@ -38,6 +38,14 @@ pub struct TokenUsageCache {
     files: HashMap<PathBuf, CachedSessionFile>,
 }
 
+fn usage_roots(home: &Path) -> [PathBuf; 3] {
+    [
+        home.join("sessions"),
+        home.join("archived_sessions"),
+        home.join("session-archive"),
+    ]
+}
+
 fn codex_home() -> Option<PathBuf> {
     std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
@@ -124,9 +132,8 @@ fn add_usage(total: &mut TokenUsageSummary, usage: &SessionUsage) {
     total.total_tokens = total.total_tokens.saturating_add(usage.total_tokens);
 }
 
-pub fn scan(cache: &Mutex<TokenUsageCache>) -> Result<TokenUsageSummary, String> {
-    let home = codex_home().ok_or_else(|| "Codex home directory was not found.".to_string())?;
-    let roots = [home.join("sessions"), home.join("archived_sessions")];
+fn scan_home(cache: &Mutex<TokenUsageCache>, home: &Path) -> Result<TokenUsageSummary, String> {
+    let roots = usage_roots(home);
     if roots.iter().all(|root| !root.exists()) {
         return Err("Codex session history was not found.".into());
     }
@@ -191,6 +198,11 @@ pub fn scan(cache: &Mutex<TokenUsageCache>) -> Result<TokenUsageSummary, String>
     Ok(summary)
 }
 
+pub fn scan(cache: &Mutex<TokenUsageCache>) -> Result<TokenUsageSummary, String> {
+    let home = codex_home().ok_or_else(|| "Codex home directory was not found.".to_string())?;
+    scan_home(cache, &home)
+}
+
 pub fn scan_conversation(
     cache: &Mutex<TokenUsageCache>,
     conversation_id: Option<&str>,
@@ -220,9 +232,17 @@ pub fn scan_conversation(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::{
+        fs,
+        io::Cursor,
+        sync::Mutex,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
-    use super::parse_session;
+    use super::{parse_session, scan_home, TokenUsageCache};
+
+    const SESSION_LOG: &str = r#"{"type":"session_meta","payload":{"id":"session-1"}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":250,"cached_input_tokens":80,"output_tokens":20,"reasoning_output_tokens":5,"total_tokens":270}}}}"#;
 
     #[test]
     fn takes_latest_cumulative_usage_without_double_counting_events() {
@@ -247,5 +267,36 @@ mod tests {
 
         assert_eq!(usage.session_id, "fallback");
         assert_eq!(usage.total_tokens, 42);
+    }
+
+    #[test]
+    fn keeps_all_time_usage_when_session_files_move_to_session_archive() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after the Unix epoch")
+            .as_nanos();
+        let home = std::env::temp_dir().join(format!(
+            "quota-beacon-token-usage-{}-{unique}",
+            std::process::id()
+        ));
+        let sessions = home.join("sessions");
+        let archived = home.join("session-archive/stage2/2026/07/26");
+        fs::create_dir_all(&sessions).expect("sessions directory should be created");
+        let original = sessions.join("session.jsonl");
+        fs::write(&original, SESSION_LOG).expect("session log should be written");
+
+        let cache = Mutex::new(TokenUsageCache::default());
+        let before = scan_home(&cache, &home).expect("initial history scan should succeed");
+
+        fs::create_dir_all(&archived).expect("session archive should be created");
+        fs::rename(&original, archived.join("session.jsonl"))
+            .expect("session log should move into the archive");
+        let after = scan_home(&cache, &home).expect("archived history scan should succeed");
+
+        assert_eq!(before.total_tokens, 270);
+        assert_eq!(after.total_tokens, before.total_tokens);
+        assert_eq!(after.session_count, before.session_count);
+
+        fs::remove_dir_all(&home).expect("temporary history should be removed");
     }
 }
