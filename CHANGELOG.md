@@ -2,6 +2,23 @@
 
 本文件记录本仓库可核实的版本与开发里程碑。未创建 Git 提交或标签的工作统一标记为“未发布”，不追溯虚构版本号。
 
+## macOS 1.5.6 — 2026-08-01
+
+### 修复
+
+- 从 `macos-v1.5.5` 建立独立 macOS 版本线，Windows 的 `pro5x-test` 与 `v1.5.8.pro5x` 保持不变。
+- 启用 Tauri `macOSPrivateApi`，并将 `widget`、`palette`、`palette-editor` 三个透明窗口的原生背景显式设为 `#00000000`，修复 macOS 悬浮球外侧及展开卡片四角出现白色方形底的问题。
+- 新增配置回归测试，防止透明窗口遗漏原生透明背景。
+
+### 发布
+
+- macOS 使用独立 `macos` 分支与 `macos-v*` 标签，只生成 Universal ZIP、DMG 和 SHA-256；不再与 Windows 版本合并发布。
+
+### 验证
+
+- Windows 本机执行 22 项前端测试、10 项 Rust 测试、TypeScript/Vite 构建、Rust 检查和 Tauri release 构建；macOS Universal 构建、签名、双架构与 DMG 完整性由 GitHub Actions 验证。
+- macOS 白底消失仍需使用本次 DMG 在真实 Mac 的浅色和深色桌面上验收。
+
 ## 1.5.5 — 2026-07-26
 
 ### 修复

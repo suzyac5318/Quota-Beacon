@@ -1,92 +1,50 @@
-# GitHub 发布与分享清单
+# macOS GitHub 发布清单
 
-## 需要提前安装或准备什么
+## 版本线边界
 
-本机 Windows 不需要安装 macOS 构建工具，也不能直接构建 macOS 安装包。macOS 包由 GitHub Actions 的 `macos-latest` runner 构建。
+- macOS 源码固定维护在 `macos` 分支。
+- macOS 回退与发布标签固定使用 `macos-v*`，例如 `macos-v1.5.5`、`macos-v1.5.6`。
+- Windows 使用独立分支和版本标签；不得从 `macos` 分支生成或上传 Windows 发布包。
+- `upstream` 只用于读取上游历史，严禁推送；所有 macOS 分支与标签只推送到 `origin`。
 
-本机需要：
+## 本机准备
 
-- Git
-- Node.js 20+
-- Rust stable
-- npm 依赖已安装
+Windows 本机不能直接构建 macOS 安装包。macOS Universal 包由 GitHub Actions 的 `macos-latest` runner 构建，本机只需完成共享代码的前端、Rust 和 Windows Tauri 编译检查。
 
-GitHub 需要：
-
-- 一个 GitHub 仓库
-- GitHub Actions 已启用
-- 代码已推送到默认分支
-
-macOS Universal 构建需要的 Rust targets 已经在 CI/release workflow 中自动安装：
+GitHub Actions 会自动安装：
 
 ```bash
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 ```
 
-你不需要在 Windows 本机安装这两个 target。
+## 发布 macOS 版本
 
-## 第一次上传到 GitHub
-
-当前 `upstream` 只用于读取衍生项目的上游历史，绝不可推送。`origin` 应指向 `suzyac5318/Quota-beacon`。首次只推送主分支，不使用 `--follow-tags`，避免所有历史版本标签同时触发 Release：
+完成版本文件与 `CHANGELOG.md` 更新后，提交并创建 Mac 专用标签：
 
 ```bash
-git remote add origin https://github.com/suzyac5318/Quota-beacon.git
-git branch -M main
-git push -u origin main
-```
-
-后续版本完成后，更新 `VERSION`、各构建配置和 `CHANGELOG.md`，创建版本化提交和标签，再推送：
-
-```bash
+git switch macos
 git add <expected-files>
-git commit -m "v1.5.4: remove replaced README image"
-git tag -a v1.5.4 -m "Quota Beacon v1.5.4"
-git push origin main
-git push origin v1.5.4
+git commit -m "macos-v1.5.6: fix transparent window background"
+git tag -a macos-v1.5.6 -m "Quota Beacon macOS v1.5.6"
+git push -u origin macos
+git push origin macos-v1.5.6
 ```
 
-## 生成可分享版本
+推送 `macos-v*` 后，`.github/workflows/release.yml` 只构建 macOS Universal 工件，并创建草稿 Release。附件必须仅包含：
 
-推送 `v*` tag 会触发 release workflow：
-
-```bash
-git tag -a v1.5.4 -m "Quota Beacon v1.5.4"
-git push origin v1.5.4
-```
-
-构建完成后，到 GitHub 仓库的 Releases 页面检查草稿 release。附件应包含：
-
-- `quota-beacon-windows-unsigned.zip`
 - `quota-beacon-macos-universal-ad-hoc.zip`
 - macOS Universal `.dmg`
 - `quota-beacon-macos-universal-ad-hoc.sha256`
 
-确认 Windows 与 macOS 附件、SHA-256 和自动生成的说明无误后再发布草稿。不要在任一平台构建失败时提前公开 Release；如发现问题，应保留失败记录并发布修复版本。
-
-首次公开仓库还应确认：
-
-- `main` 分支规则和必需状态检查已启用。
-- Dependabot、依赖漏洞警报、secret scanning 与 push protection 已启用。
-- About 描述、Topics、Issues 和 Social Preview 已配置。
-- Private vulnerability reporting 已启用。
+如果附件中出现 Windows 包，或 Mac 构建、签名、双架构、DMG 校验任一失败，不得发布草稿，应保留失败记录并递增 macOS 补丁版本修复。
 
 ## 发给 Mac 用户时的说明
 
-当前 macOS 包是 ad-hoc 签名、未公证的包。用户首次打开可能会被 Gatekeeper 拦截，可以这样打开：
+当前 macOS 包是 ad-hoc 签名且未公证：
 
-1. 下载 `.dmg`，需要时用同一 Release 的 `.sha256` 核对完整性。
-2. 打开 DMG，把应用拖到 Applications。
-3. 在 Applications 中右键点击应用，选择 Open，并在系统提示里再次选择 Open。
+1. 下载 `.dmg`，需要时使用同一 Release 的 `.sha256` 核对完整性。
+2. 打开 DMG，把 Quota Beacon 拖入 Applications。
+3. 在 Applications 中右键应用并选择 Open。
 4. 如果仍被拦截，到 System Settings -> Privacy & Security 选择 Open Anyway。
 
-## 以后公开分发还需要什么
-
-如果要面向非技术用户公开分发，建议补：
-
-- Windows 代码签名证书。
-- Apple Developer ID Application 证书。
-- Apple Team ID。
-- Apple app-specific password。
-- GitHub Secrets 中的签名和公证配置。
-
-这些账号、证书和密码不能由代码生成，需要项目所有者申请或购买。
+不要建议用户关闭系统全局 Gatekeeper。

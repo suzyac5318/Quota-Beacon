@@ -15,7 +15,7 @@ Quota Beacon 是一个独立维护的 Tauri 2 桌面悬浮窗，用本机 Codex 
 
 - 悬浮额度卡片：展示 Codex 5 小时窗口剩余额度、周额度、重置时间和重置机会。
 - 桌面行为：无边框、透明、置顶、可拖动、可锁定鼠标穿透、可托盘显示/隐藏/刷新/解锁/退出。
-- 跨平台构建：同一套前端 UI/动效代码输出 Windows unsigned 包和 macOS Universal ad-hoc 签名包。
+- 跨平台代码：Windows 与 macOS 共享前端 UI/动效和业务逻辑，但使用独立分支、版本标签与发布包。
 - 平台验证：Windows 11 已实机验证；macOS 由 CI 生成并校验 Universal bundle、DMG 和 SHA-256，真实 Mac 交互仍待验收。
 - 状态兜底：接口失败时保留上次成功数据并标记 stale；登录失效、限流、接口变形会给安全提示。
 - 偏好保存：锁定状态、置顶状态、固定 provider、轮播间隔、语言写入 Tauri app config 目录，带 `.bak` 备份恢复。
@@ -30,7 +30,7 @@ Quota Beacon 是一个独立维护的 Tauri 2 桌面悬浮窗，用本机 Codex 
 - `src/lib/snapshots.ts`：新旧 snapshot 合并与失败保留旧数据逻辑。
 - `src-tauri/src/codex.rs`：读取本地 Codex auth、拼接请求头、调用额度与 reset credits 接口、解析响应。
 - `src-tauri/src/lib.rs`：Tauri command、缓存锁、偏好持久化、托盘、窗口状态、锁定穿透。
-- `.github/workflows/release.yml`：生成 Windows unsigned 包，以及带 DMG、SHA-256 的 macOS Universal ad-hoc 发布包。
+- `.github/workflows/release.yml`：在 `macos-v*` 标签上仅生成带 DMG、SHA-256 的 macOS Universal ad-hoc 发布包。
 
 ## 数据与安全边界
 

@@ -21,20 +21,8 @@ jobs:
       - run: npm run build
       - run: npm audit --audit-level=high
 
-  desktop:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            artifact-name: quota-beacon-windows-unsigned
-            build-command: npm run tauri -- build
-            artifact-path: src-tauri/target/release/bundle/**
-          - os: macos-latest
-            artifact-name: quota-beacon-macos-universal-ad-hoc
-            build-command: npm run tauri -- build --target universal-apple-darwin
-            artifact-path: src-tauri/target/universal-apple-darwin/release/bundle/**
-    runs-on: ${{ matrix.os }}
+  desktop-macos:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -43,23 +31,21 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       - name: Install macOS universal targets
-        if: runner.os == 'macOS'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
       - run: npm ci
       - run: cargo test --manifest-path src-tauri/Cargo.toml
-      - run: ${{ matrix.build-command }}
+      - run: npm run tauri -- build --target universal-apple-darwin
       - name: Verify macOS bundle
-        if: runner.os == 'macOS'
         shell: bash
         run: .github/scripts/verify-macos-bundle.sh src-tauri/target/universal-apple-darwin/release/bundle
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ matrix.artifact-name }}
+          name: quota-beacon-macos-universal-ad-hoc
           path: |
-            ${{ matrix.artifact-path }}
+            src-tauri/target/universal-apple-darwin/release/bundle/**
             quota-beacon-macos-universal-ad-hoc.sha256
           if-no-files-found: error
           retention-days: 14

@@ -25,7 +25,6 @@
 发布前应满足：
 
 - 前端测试、前端构建、Rust 测试通过。
-- Windows 和 macOS CI bundle artifact 成功生成。
-- Windows 实机完成安装、启动、托盘、拖动、锁定、语言切换、退出验证。
+- 当前版本线的 macOS CI Universal bundle、DMG 和 SHA-256 成功生成；Windows 由独立版本线验收。
 - macOS 实机完成 DMG 挂载、拖入 Applications、Gatekeeper 手动放行、再次正常启动、菜单栏托盘、透明悬浮窗、展开/收起、拖动、置顶、读取 `~/.codex/auth.json` 验证；在完成前必须在 README 与 Release 中明确标注“尚待 Mac 实机验证”。
 - 严重和高风险问题清零。

@@ -6,7 +6,7 @@
 
 Quota Beacon 是一款独立维护、local-first 的 Tauri 桌面悬浮工具。它读取本机已有的 Codex Desktop 登录状态，以悬浮卡片展示真实额度、重置时间、本机 Token 汇总和可定制的额度主题。
 
-> 当前版本：`1.5.4`
+> 当前 macOS 版本：`1.5.6`（独立 `macos` 版本线）
 >
 > Quota Beacon 是非官方社区项目，与 OpenAI 不存在隶属、认可或赞助关系。
 
@@ -30,7 +30,7 @@ Quota Beacon 是一款独立维护、local-first 的 Tauri 桌面悬浮工具。
 | Windows | unsigned ZIP/安装包 | Windows 11 实机验证 |
 | macOS | Universal DMG/ZIP，ad-hoc 签名 | GitHub Actions 构建、双架构/签名/DMG 自动校验；尚待 Mac 实机交互验证 |
 
-macOS Universal 包同时包含 Apple Silicon (`arm64`) 与 Intel (`x86_64`) 架构。Windows 与 macOS 使用同一套 React/CSS/Tauri 界面代码。
+macOS Universal 包同时包含 Apple Silicon (`arm64`) 与 Intel (`x86_64`) 架构。Windows 与 macOS 继续共享 React/CSS/Tauri 业务代码，但使用不同分支、版本标签和发布包，互不混用。
 
 ## 下载与安装
 
@@ -78,7 +78,7 @@ npm run tauri -- build
 
 ## 发布
 
-GitHub Actions 会在 push/PR 时执行测试和双平台构建。推送单个 `v*` 标签会生成 Windows 与 macOS 工件，并创建包含两种平台附件的草稿 Release。维护流程见 [GitHub 发布清单](docs/GITHUB-RELEASE-CHECKLIST.md)。
+macOS 固定使用 `macos` 分支与 `macos-v*` 标签。推送 `macos-v*` 只生成 macOS Universal ZIP、DMG 与 SHA-256，并创建仅含 Mac 附件的草稿 Release；Windows 使用自己的分支和版本线。维护流程见 [GitHub 发布清单](docs/GITHUB-RELEASE-CHECKLIST.md)。
 
 ## 衍生项目、许可证与商标
 
