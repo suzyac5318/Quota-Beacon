@@ -2,6 +2,7 @@ mod codex;
 mod codex_overlay;
 mod models;
 mod token_usage;
+mod window_material;
 
 use std::{
     fs,
@@ -391,6 +392,11 @@ fn set_widget_always_on_top(
     Ok(next)
 }
 
+#[tauri::command]
+fn set_widget_clip(expanded: bool, app: AppHandle) {
+    window_material::animate_widget_region(app, expanded);
+}
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show / Hide", true, None::<&str>)?;
     let refresh = MenuItem::with_id(app, "refresh", "Refresh now", true, None::<&str>)?;
@@ -524,6 +530,7 @@ pub fn run() {
                 token_usage_cache: Arc::clone(&token_usage_cache),
                 palette_generation: AtomicU64::new(0),
             });
+            window_material::apply_window_materials(app.handle());
             codex_overlay::start(app.handle().clone(), token_usage_cache);
             if setup_tray(app).is_err() {
                 eprintln!("tray setup failed; enabling taskbar fallback");
@@ -547,6 +554,7 @@ pub fn run() {
             set_preferences,
             set_widget_locked,
             set_widget_always_on_top,
+            set_widget_clip,
             open_palette_preview,
             update_palette_preview,
             update_palette_colors,

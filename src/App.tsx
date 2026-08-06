@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QuotaCard } from "./components/QuotaCard";
-import { closePalettePreview, fetchSnapshots, fetchTokenUsage, getPreferences, listenDesktopEvents, listenPalettePreview, openPalettePreview, setAlwaysOnTop, setWidgetExpanded, startDragging, updatePreferences } from "./lib/bridge";
+import { closePalettePreview, fetchSnapshots, fetchTokenUsage, getPreferences, listenDesktopEvents, listenPalettePreview, openPalettePreview, setAlwaysOnTop, setWidgetClip, setWidgetExpanded, startDragging, updatePreferences } from "./lib/bridge";
 import { clampPercent, getPrimaryQuota } from "./lib/format";
 import { copy, nextLanguage, normalizeLanguage } from "./lib/i18n";
 import { DEFAULT_PALETTE_COLORS, normalizePaletteColors } from "./lib/quotaTheme";
@@ -53,6 +53,7 @@ export default function App() {
     collapseDelayTimer.current = window.setTimeout(() => {
       collapseDelayTimer.current = null;
       if (hoveredRef.current || paletteActive.current) return;
+      void setWidgetClip(false);
       setCompact(true);
       collapseResizeTimer.current = window.setTimeout(() => {
         collapseResizeTimer.current = null;
@@ -226,7 +227,10 @@ export default function App() {
       void setWidgetExpanded(true).catch(() => setOperationError("Widget expand failed."));
       hoverExpandTimer.current = window.setTimeout(() => {
         hoverExpandTimer.current = null;
-        if (hoveredRef.current || paletteActive.current) setCompact(false);
+        if (hoveredRef.current || paletteActive.current) {
+          void setWidgetClip(true);
+          setCompact(false);
+        }
       }, HOVER_LIFT_MS);
       void refresh(true);
       return;
@@ -258,6 +262,7 @@ export default function App() {
     paletteClosing.current = false;
     clearWidgetMotionTimers();
     setPalettePercent(initial);
+    void setWidgetClip(true);
     setCompact(false);
     void setWidgetExpanded(true);
     void openPalettePreview(initial).then(() => {

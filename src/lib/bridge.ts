@@ -82,6 +82,12 @@ export async function setWidgetExpanded(expanded: boolean): Promise<void> {
   await getCurrentWindow().setSize(size);
 }
 
+export async function setWidgetClip(expanded: boolean): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("set_widget_clip", { expanded });
+}
+
 export async function openPalettePreview(percent: number): Promise<void> {
   if (!isTauri()) return;
   const { invoke } = await import("@tauri-apps/api/core");
