@@ -1,6 +1,6 @@
 [package]
 name = "quota-beacon"
-version = "1.6.0"
+version = "1.6.1"
 description = "A private, local-first floating monitor for Codex usage limits"
 authors = ["Quota Beacon contributors"]
 license = "MIT"
@@ -29,8 +29,6 @@ tokio = { version = "1", features = ["macros", "sync"] }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
-  "Win32_Graphics_Dwm",
-  "Win32_Graphics_Gdi",
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",
 ] }

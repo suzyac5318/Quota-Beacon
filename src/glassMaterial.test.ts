@@ -20,14 +20,14 @@ describe("Windows glass material", () => {
     expect(windows.every((window) => window.transparent && window.backgroundColor === "#00000000")).toBe(true);
   });
 
-  it("uses Windows 11 Desktop Acrylic without the legacy acrylic crate", () => {
-    expect(cargoManifest).toContain('"Win32_Graphics_Dwm"');
+  it("keeps rectangular native window material disabled", () => {
+    expect(cargoManifest).not.toContain('"Win32_Graphics_Dwm"');
+    expect(cargoManifest).not.toContain('"Win32_Graphics_Gdi"');
     expect(cargoManifest).not.toContain("window-vibrancy");
-    expect(nativeMaterial).toContain("DWMSBT_TRANSIENTWINDOW");
-    expect(nativeMaterial).toContain("CreateRoundRectRgn");
-    expect(nativeMaterial).toContain("CLIP_GENERATION");
-    expect(nativeMaterial).toContain('for label in ["widget", "palette", "palette-editor"]');
-    expect(nativeMaterial).toContain('#[cfg(target_os = "windows")]');
+    expect(nativeMaterial).not.toContain("DwmSetWindowAttribute");
+    expect(nativeMaterial).not.toContain("SetWindowRgn");
+    expect(nativeMaterial).toContain("pub fn apply_window_materials(_app: &AppHandle) {}");
+    expect(nativeMaterial).toContain("pub fn animate_widget_region(_app: AppHandle, _expanded: bool) {}");
   });
 
   it("defines one glass system and accessibility fallbacks", () => {
@@ -37,5 +37,12 @@ describe("Windows glass material", () => {
     expect(styles).toContain("@media (prefers-reduced-transparency: reduce)");
     expect(styles).toContain("@media (prefers-contrast: more)");
     expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
+  });
+
+  it("does not paint an outer shadow into the transparent widget corners", () => {
+    expect(styles).not.toContain("0 10px 32px rgba(37,45,60,.12)");
+    expect(styles).not.toContain("0 5px 16px rgba(37,45,60,.1)");
+    expect(styles).not.toContain("0 8px 22px rgba(72,88,112,.15)");
+    expect(styles).not.toContain("0 4px 14px rgba(72,88,112,.08)");
   });
 });
