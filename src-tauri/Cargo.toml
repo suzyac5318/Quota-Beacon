@@ -1,6 +1,6 @@
 [package]
 name = "quota-beacon"
-version = "1.6.1"
+version = "1.6.2"
 description = "A private, local-first floating monitor for Codex usage limits"
 authors = ["Quota Beacon contributors"]
 license = "MIT"
@@ -27,8 +27,25 @@ tauri-plugin-window-state = "2"
 tokio = { version = "1", features = ["macros", "sync"] }
 
 [target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Foundation",
+  "Graphics_Effects",
+  "System",
+  "UI_Composition",
+  "UI_Composition_Desktop",
+  "Win32_Foundation",
+  "Win32_Graphics_Direct2D",
+  "Win32_Graphics_Direct2D_Common",
+  "Win32_System_WinRT",
+  "Win32_System_WinRT_Composition",
+  "Win32_System_WinRT_Graphics_Direct2D",
+] }
+windows-core = "0.61"
+windows-numerics = "0.2"
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_System_LibraryLoader",
   "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",
 ] }

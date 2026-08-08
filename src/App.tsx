@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QuotaCard } from "./components/QuotaCard";
-import { closePalettePreview, fetchSnapshots, fetchTokenUsage, getPreferences, listenDesktopEvents, listenPalettePreview, openPalettePreview, setAlwaysOnTop, setWidgetClip, setWidgetExpanded, startDragging, updatePreferences } from "./lib/bridge";
+import { closePalettePreview, fetchSnapshots, fetchTokenUsage, getPreferences, listenDesktopEvents, listenPalettePreview, openPalettePreview, setAlwaysOnTop, setWidgetClip, setWidgetExpanded, startDragging, syncWidgetCssScale, updatePreferences } from "./lib/bridge";
 import { clampPercent, getPrimaryQuota } from "./lib/format";
 import { copy, nextLanguage, normalizeLanguage } from "./lib/i18n";
 import { DEFAULT_PALETTE_COLORS, normalizePaletteColors } from "./lib/quotaTheme";
@@ -45,6 +45,24 @@ export default function App() {
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = null;
     }
+  }, []);
+
+  useEffect(() => {
+    let frame = 0;
+    const syncScale = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        void syncWidgetCssScale(window.innerWidth);
+      });
+    };
+    syncScale();
+    window.addEventListener("resize", syncScale);
+    window.visualViewport?.addEventListener("resize", syncScale);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", syncScale);
+      window.visualViewport?.removeEventListener("resize", syncScale);
+    };
   }, []);
 
   const scheduleCollapse = useCallback((withHoverDelay = true) => {

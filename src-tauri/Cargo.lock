@@ -2699,7 +2699,7 @@ dependencies = [
 
 [[package]]
 name = "quota-beacon"
-version = "1.6.1"
+version = "1.6.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2713,6 +2713,9 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-window-state",
  "tokio",
+ "windows",
+ "windows-core 0.61.2",
+ "windows-numerics",
  "windows-sys 0.61.2",
 ]
 

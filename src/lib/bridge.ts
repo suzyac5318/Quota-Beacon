@@ -88,6 +88,18 @@ export async function setWidgetClip(expanded: boolean): Promise<void> {
   await invoke("set_widget_clip", { expanded });
 }
 
+export async function syncWidgetCssScale(cssViewportWidth: number): Promise<void> {
+  if (!isTauri() || !Number.isFinite(cssViewportWidth) || cssViewportWidth <= 0) return;
+  const [{ invoke }, { getCurrentWindow }] = await Promise.all([
+    import("@tauri-apps/api/core"),
+    import("@tauri-apps/api/window"),
+  ]);
+  const physicalSize = await getCurrentWindow().outerSize();
+  const scale = physicalSize.width / cssViewportWidth;
+  if (!Number.isFinite(scale) || scale <= 0) return;
+  await invoke("set_widget_css_scale", { scale });
+}
+
 export async function openPalettePreview(percent: number): Promise<void> {
   if (!isTauri()) return;
   const { invoke } = await import("@tauri-apps/api/core");

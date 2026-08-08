@@ -62,10 +62,11 @@ fn load_preferences(path: &PathBuf) -> WidgetPreferences {
 
 fn persist_preferences(path: &PathBuf, value: &WidgetPreferences) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|_| "failed to create settings directory".to_string())?;
+        fs::create_dir_all(parent)
+            .map_err(|_| "failed to create settings directory".to_string())?;
     }
-    let serialized = serde_json::to_vec_pretty(value)
-        .map_err(|_| "failed to serialize settings".to_string())?;
+    let serialized =
+        serde_json::to_vec_pretty(value).map_err(|_| "failed to serialize settings".to_string())?;
     let temporary = path.with_extension("json.tmp");
     let backup = path.with_extension("json.bak");
     let mut file = fs::File::create(&temporary)
@@ -235,6 +236,7 @@ fn open_palette_preview(
         .map_err(|error| format!("failed to show palette editor window: {error}"))?;
     if let Some(widget) = app.get_webview_window("widget") {
         let _ = widget.set_always_on_top(true);
+        window_material::sync_window_material(&app);
     }
     let _ = palette.set_always_on_top(true);
     let _ = editor.set_always_on_top(true);
@@ -268,6 +270,7 @@ fn finish_palette_preview(app: &AppHandle) {
         if let Ok(preferences) = state.preferences.lock() {
             if let Some(widget) = app.get_webview_window("widget") {
                 let _ = widget.set_always_on_top(preferences.always_on_top);
+                window_material::sync_window_material(app);
             }
         }
     }
@@ -384,6 +387,7 @@ fn set_widget_always_on_top(
         let _ = persist_preferences(&state.preferences_path, &previous);
         return Err(format!("failed to toggle always-on-top: {error}"));
     }
+    window_material::sync_window_material(&app);
     *state
         .preferences
         .lock()
@@ -397,12 +401,23 @@ fn set_widget_clip(expanded: bool, app: AppHandle) {
     window_material::animate_widget_region(app, expanded);
 }
 
+#[tauri::command]
+fn set_widget_css_scale(scale: f64, app: AppHandle) {
+    window_material::set_widget_css_scale(&app, scale as f32);
+}
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show / Hide", true, None::<&str>)?;
     let refresh = MenuItem::with_id(app, "refresh", "Refresh now", true, None::<&str>)?;
     let unlock = MenuItem::with_id(app, "unlock", "Unlock widget", true, None::<&str>)?;
     let pin = MenuItem::with_id(app, "pin", "Pin / Unpin Codex", true, None::<&str>)?;
-    let language = MenuItem::with_id(app, "language", "Switch Language / 切换语言", true, None::<&str>)?;
+    let language = MenuItem::with_id(
+        app,
+        "language",
+        "Switch Language / 切换语言",
+        true,
+        None::<&str>,
+    )?;
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     let autostart = CheckMenuItem::with_id(
         app,
@@ -413,7 +428,10 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &refresh, &unlock, &pin, &language, &autostart, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[&show, &refresh, &unlock, &pin, &language, &autostart, &quit],
+    )?;
     let mut builder = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .tooltip("Quota Beacon");
@@ -427,9 +445,11 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 if let Some(window) = app.get_webview_window("widget") {
                     if window.is_visible().unwrap_or(false) {
                         let _ = window.hide();
+                        window_material::hide_window_material();
                         finish_palette_preview(app);
                     } else {
                         let _ = window.show();
+                        window_material::sync_window_material(app);
                         let _ = window.set_focus();
                     }
                 }
@@ -502,6 +522,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("widget") {
                 let _ = window.show();
+                window_material::sync_window_material(app);
                 let _ = window.set_focus();
             }
         }))
@@ -509,7 +530,11 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(WindowStateBuilder::default().with_denylist(&["palette", "palette-editor"]).build())
+        .plugin(
+            WindowStateBuilder::default()
+                .with_denylist(&["palette", "palette-editor"])
+                .build(),
+        )
         .setup(|app| {
             let data_dir = app.path().app_config_dir()?;
             let preferences_path = data_dir.join("preferences.json");
@@ -530,7 +555,16 @@ pub fn run() {
                 token_usage_cache: Arc::clone(&token_usage_cache),
                 palette_generation: AtomicU64::new(0),
             });
-            window_material::apply_window_materials(app.handle());
+            let material_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(600)).await;
+                if let Some(window) = material_app.get_webview_window("widget") {
+                    let apply_app = material_app.clone();
+                    let _ = window.run_on_main_thread(move || {
+                        window_material::apply_window_materials(&apply_app);
+                    });
+                }
+            });
             codex_overlay::start(app.handle().clone(), token_usage_cache);
             if setup_tray(app).is_err() {
                 eprintln!("tray setup failed; enabling taskbar fallback");
@@ -555,6 +589,7 @@ pub fn run() {
             set_widget_locked,
             set_widget_always_on_top,
             set_widget_clip,
+            set_widget_css_scale,
             open_palette_preview,
             update_palette_preview,
             update_palette_colors,
@@ -570,12 +605,21 @@ pub fn run() {
             {
                 if let Some(window) = app.get_webview_window("widget") {
                     let _ = window.show();
+                    window_material::sync_window_material(app);
                     let _ = window.set_focus();
                 }
             }
         })
         .on_window_event(|window, event| {
-            if window.label() == "widget" && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+            if window.label() == "widget"
+                && matches!(
+                    event,
+                    WindowEvent::Moved(_)
+                        | WindowEvent::Resized(_)
+                        | WindowEvent::ScaleFactorChanged { .. }
+                )
+            {
+                window_material::sync_window_material(window.app_handle());
                 let _ = position_palette_windows(window.app_handle());
             }
             if ["widget", "palette", "palette-editor"].contains(&window.label())
@@ -597,6 +641,9 @@ pub fn run() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+                if window.label() == "widget" {
+                    window_material::hide_window_material();
+                }
                 if window.label() == "palette" || window.label() == "palette-editor" {
                     finish_palette_preview(window.app_handle());
                 } else if window.label() == "widget" {
@@ -609,6 +656,9 @@ pub fn run() {
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::Resumed) {
             let _ = app_handle.emit_to("widget", "refresh-requested", ());
+        }
+        if matches!(event, tauri::RunEvent::Exit) {
+            window_material::destroy_window_materials();
         }
     });
 }
