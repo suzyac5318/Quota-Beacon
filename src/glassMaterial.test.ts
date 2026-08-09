@@ -34,10 +34,12 @@ describe("Windows glass material", () => {
       nativeMaterial.indexOf("CreateHostBackdropBrush"),
     );
     expect(nativeMaterial).toContain("BLUR_AMOUNT: f32 = 8.0");
+    expect(nativeMaterial).toContain("BLUR_EDGE_INSET: f32 = 1.0");
     expect(nativeMaterial).toContain("CreateRoundedRectangleGeometry");
     expect(nativeMaterial).toContain("CreateGeometricClipWithGeometry");
     expect(nativeMaterial).toContain("SetCornerRadius");
-    expect(nativeMaterial).toContain("compact_surface_uses_one_ten_pixel_inset");
+    expect(nativeMaterial).toContain("compact_blur_stays_inside_css_border");
+    expect(nativeMaterial).toContain("expanded_blur_stays_inside_css_border");
     expect(nativeMaterial).toContain("compact_surface_stays_eighty_pixels_after_parent_expands");
     expect(nativeMaterial).toContain("native_morph_curve_matches_css_keyframes");
     expect(nativeMaterial).toContain("compact_surface_tracks_webview_pixel_scale_without_corner_overhang");

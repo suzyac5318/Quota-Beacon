@@ -63,6 +63,8 @@ const COMPACT_RADIUS: f32 = 28.0;
 #[cfg(target_os = "windows")]
 const EXPANDED_RADIUS: f32 = 38.0;
 #[cfg(target_os = "windows")]
+const BLUR_EDGE_INSET: f32 = 1.0;
+#[cfg(target_os = "windows")]
 const BLUR_AMOUNT: f32 = 8.0;
 #[cfg(target_os = "windows")]
 const EXPAND_MORPH_MS: u64 = 400;
@@ -435,23 +437,37 @@ fn morph_curve(linear: f64) -> f64 {
 #[cfg(target_os = "windows")]
 fn widget_geometry(parent: RECT, scale: f32, progress: f32) -> SurfaceGeometry {
     let progress = progress.clamp(-0.05, 1.05);
-    let x = (COMPACT_INSET * scale * (1.0 - progress)).ceil().max(0.0) as i32;
-    let y = x;
+    let outer_x = (COMPACT_INSET * scale * (1.0 - progress))
+        .ceil()
+        .max(0.0) as i32;
+    let outer_y = outer_x;
     let parent_width = parent.right - parent.left;
     let parent_height = parent.bottom - parent.top;
     let compact_size = COMPACT_SIZE * scale;
-    let width = (compact_size + (parent_width as f32 - compact_size) * progress)
+    let outer_width = (compact_size + (parent_width as f32 - compact_size) * progress)
         .floor()
         .max(1.0) as i32;
-    let height = (compact_size + (parent_height as f32 - compact_size) * progress)
+    let outer_height = (compact_size + (parent_height as f32 - compact_size) * progress)
         .floor()
         .max(1.0) as i32;
+    let outer_width = outer_width.min((parent_width - outer_x).max(1));
+    let outer_height = outer_height.min((parent_height - outer_y).max(1));
+
+    // The WebView owns the antialiased 1px border. Keeping the native blur
+    // inside that border prevents two rounded clips from forming bright ears
+    // where their independently rasterized curves meet on scaled displays.
+    let edge_inset = (BLUR_EDGE_INSET * scale).ceil().max(1.0) as i32;
+    let x = outer_x + edge_inset;
+    let y = outer_y + edge_inset;
     SurfaceGeometry {
         x,
         y,
-        width: width.min((parent_width - x).max(1)),
-        height: height.min((parent_height - y).max(1)),
-        radius: (COMPACT_RADIUS + (EXPANDED_RADIUS - COMPACT_RADIUS) * progress) * scale,
+        width: (outer_width - edge_inset * 2).max(1),
+        height: (outer_height - edge_inset * 2).max(1),
+        radius: ((COMPACT_RADIUS + (EXPANDED_RADIUS - COMPACT_RADIUS) * progress
+            - BLUR_EDGE_INSET)
+            * scale)
+            .max(0.0),
     }
 }
 
@@ -731,29 +747,29 @@ mod tests {
     }
 
     #[test]
-    fn compact_surface_uses_one_ten_pixel_inset() {
+    fn compact_blur_stays_inside_css_border() {
         assert_eq!(
             widget_geometry(rect(160, 160), 1.6, 0.0),
             SurfaceGeometry {
-                x: 16,
-                y: 16,
-                width: 128,
-                height: 128,
-                radius: 44.8,
+                x: 18,
+                y: 18,
+                width: 124,
+                height: 124,
+                radius: 43.2,
             }
         );
     }
 
     #[test]
-    fn expanded_surface_fills_the_widget() {
+    fn expanded_blur_stays_inside_css_border() {
         assert_eq!(
             widget_geometry(rect(512, 512), 1.6, 1.0),
             SurfaceGeometry {
-                x: 0,
-                y: 0,
-                width: 512,
-                height: 512,
-                radius: 60.8,
+                x: 2,
+                y: 2,
+                width: 508,
+                height: 508,
+                radius: 59.2,
             }
         );
     }
@@ -763,11 +779,11 @@ mod tests {
         assert_eq!(
             widget_geometry(rect(512, 512), 1.6, 0.0),
             SurfaceGeometry {
-                x: 16,
-                y: 16,
-                width: 128,
-                height: 128,
-                radius: 44.8,
+                x: 18,
+                y: 18,
+                width: 124,
+                height: 124,
+                radius: 43.2,
             }
         );
     }
@@ -777,11 +793,11 @@ mod tests {
         assert_eq!(
             widget_geometry(rect(512, 512), 1.6, 0.5),
             SurfaceGeometry {
-                x: 8,
-                y: 8,
-                width: 320,
-                height: 320,
-                radius: 52.8,
+                x: 10,
+                y: 10,
+                width: 316,
+                height: 316,
+                radius: 51.2,
             }
         );
     }
@@ -799,11 +815,11 @@ mod tests {
         assert_eq!(
             widget_geometry(rect(160, 160), 1.75, 0.0),
             SurfaceGeometry {
-                x: 18,
-                y: 18,
-                width: 140,
-                height: 140,
-                radius: 49.0,
+                x: 20,
+                y: 20,
+                width: 136,
+                height: 136,
+                radius: 47.25,
             }
         );
     }
