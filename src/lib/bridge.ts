@@ -8,6 +8,8 @@ export interface PaletteSessionPayload {
   colors: string[];
 }
 
+export type RefreshRequestMode = "auto" | "manual";
+
 const mockSnapshot: ProviderSnapshot = {
   provider: "codex",
   displayName: "CODEX",
@@ -164,14 +166,16 @@ export async function listenPaletteController(handlers: {
 
 export async function listenDesktopEvents(handlers: {
   onPreferences: (value: WidgetPreferences) => void;
-  onRefresh: () => void;
+  onRefresh: (mode: RefreshRequestMode) => void;
   onFocusLost: () => void;
   onConversationTokenUsage: (value: ConversationTokenUsage) => void;
 }): Promise<() => void> {
   if (!isTauri()) return () => undefined;
   const { listen } = await import("@tauri-apps/api/event");
   const unlistenPreferences = await listen<WidgetPreferences>("preferences-changed", (event) => handlers.onPreferences(event.payload));
-  const unlistenRefresh = await listen("refresh-requested", handlers.onRefresh);
+  const unlistenRefresh = await listen<RefreshRequestMode>("refresh-requested", (event) => {
+    handlers.onRefresh(event.payload === "manual" ? "manual" : "auto");
+  });
   const unlistenFocusLost = await listen("widget-focus-lost", handlers.onFocusLost);
   const unlistenConversationTokenUsage = await listen<ConversationTokenUsage>("conversation-token-usage", (event) => handlers.onConversationTokenUsage(event.payload));
   return () => { unlistenPreferences(); unlistenRefresh(); unlistenFocusLost(); unlistenConversationTokenUsage(); };

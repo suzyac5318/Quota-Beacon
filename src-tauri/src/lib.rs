@@ -35,7 +35,20 @@ struct AppState {
 }
 
 async fn fetch_snapshots_uncached(state: &State<'_, AppState>) -> Vec<ProviderSnapshot> {
-    let _guard = state.fetch_lock.lock().await;
+    let _guard = match state.fetch_lock.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            if let Ok(cache) = state.snapshot_cache.lock() {
+                if let Some((_, values)) = &*cache {
+                    return values.clone();
+                }
+            }
+            return vec![ProviderSnapshot::failure(
+                "unavailable",
+                "Quota refresh is already running.",
+            )];
+        }
+    };
     let values = vec![codex::fetch_snapshot(&state.client).await];
     if let Ok(mut cache) = state.snapshot_cache.lock() {
         *cache = Some((Instant::now(), values.clone()));
@@ -456,7 +469,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 }
             }
             "refresh" => {
-                let _ = app.emit_to("widget", "refresh-requested", ());
+                let _ = app.emit_to("widget", "refresh-requested", "manual");
             }
             "unlock" => {
                 let _ = apply_lock(app, false);
@@ -659,7 +672,7 @@ pub fn run() {
         .expect("failed to build Quota Beacon");
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::Resumed) {
-            let _ = app_handle.emit_to("widget", "refresh-requested", ());
+            let _ = app_handle.emit_to("widget", "refresh-requested", "auto");
         }
         if matches!(event, tauri::RunEvent::Exit) {
             window_material::destroy_window_materials();

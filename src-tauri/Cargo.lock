@@ -2699,7 +2699,7 @@ dependencies = [
 
 [[package]]
 name = "quota-beacon"
-version = "1.6.10"
+version = "1.6.11"
 dependencies = [
  "base64 0.22.1",
  "chrono",

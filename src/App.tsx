@@ -4,15 +4,17 @@ import { closePalettePreview, fetchSnapshots, fetchTokenUsage, getPreferences, l
 import { clampPercent, getPrimaryQuota } from "./lib/format";
 import { copy, nextLanguage, normalizeLanguage } from "./lib/i18n";
 import { DEFAULT_PALETTE_COLORS, normalizePaletteColors } from "./lib/quotaTheme";
+import { nextRefreshSchedule } from "./lib/refreshPolicy";
 import { mergeSnapshots } from "./lib/snapshots";
 import type { ConversationTokenUsage, ProviderSnapshot, TokenUsageStatus, TokenUsageSummary, WidgetPreferences } from "./types";
 
 const DEFAULT_PREFS: WidgetPreferences = { locked: false, alwaysOnTop: true, pinnedProvider: null, autoRotateSeconds: 12, language: "zh-CN", paletteColors: [...DEFAULT_PALETTE_COLORS] };
-const REFRESH_INTERVAL_MS = 10_000;
+const REFRESH_SCHEDULER_INTERVAL_MS = 1_000;
 const TOKEN_USAGE_REFRESH_INTERVAL_MS = 60_000;
 const HOVER_LIFT_MS = 36;
 const COLLAPSE_DELAY_MS = 120;
 const COLLAPSE_MORPH_MS = 280;
+type RefreshMode = "auto" | "manual";
 
 export default function App() {
   const [snapshots, setSnapshots] = useState<ProviderSnapshot[]>([]);
@@ -28,6 +30,8 @@ export default function App() {
   const [tokenUsageStatus, setTokenUsageStatus] = useState<TokenUsageStatus>("loading");
   const [conversationTokenUsage, setConversationTokenUsage] = useState<ConversationTokenUsage>({ conversationId: null, totalTokens: null });
   const failures = useRef(0);
+  const nextAutoRefreshAt = useRef(0);
+  const refreshInFlight = useRef<Promise<void> | null>(null);
   const previousPrimary = useRef(new Map<string, number>());
   const consumptionTimers = useRef(new Map<string, number>());
   const paletteActive = useRef(false);
@@ -81,34 +85,47 @@ export default function App() {
     }, withHoverDelay ? COLLAPSE_DELAY_MS : 0);
   }, []);
 
-  const refresh = useCallback(async (force = false) => {
-    try {
-      const values = await fetchSnapshots(force);
-      const hasFailure = values.some((item) => item.status !== "ok");
-      if (hasFailure) failures.current += 1;
-      else failures.current = 0;
-      for (const item of values) {
-        const nextPrimary = getPrimaryQuota(item)?.window.remainingPercent;
-        const previous = previousPrimary.current.get(item.provider);
-        if (nextPrimary !== undefined && previous !== undefined && nextPrimary < previous) {
-          setConsumingProviders((current) => new Set(current).add(item.provider));
-          const oldTimer = consumptionTimers.current.get(item.provider);
-          if (oldTimer !== undefined) window.clearTimeout(oldTimer);
-          const timer = window.setTimeout(() => {
-            setConsumingProviders((current) => { const next = new Set(current); next.delete(item.provider); return next; });
-            consumptionTimers.current.delete(item.provider);
-          }, 5 * 60_000);
-          consumptionTimers.current.set(item.provider, timer);
+  const refresh = useCallback((mode: RefreshMode = "auto"): Promise<void> => {
+    if (refreshInFlight.current) return refreshInFlight.current;
+    if (mode === "auto" && Date.now() < nextAutoRefreshAt.current) return Promise.resolve();
+
+    const request = (async () => {
+      try {
+        const values = await fetchSnapshots(true);
+        const hasFailure = values.some((item) => item.status !== "ok");
+        const schedule = nextRefreshSchedule(failures.current, hasFailure);
+        failures.current = schedule.failures;
+        nextAutoRefreshAt.current = Date.now() + schedule.delayMs;
+        for (const item of values) {
+          const nextPrimary = getPrimaryQuota(item)?.window.remainingPercent;
+          const previous = previousPrimary.current.get(item.provider);
+          if (nextPrimary !== undefined && previous !== undefined && nextPrimary < previous) {
+            setConsumingProviders((current) => new Set(current).add(item.provider));
+            const oldTimer = consumptionTimers.current.get(item.provider);
+            if (oldTimer !== undefined) window.clearTimeout(oldTimer);
+            const timer = window.setTimeout(() => {
+              setConsumingProviders((current) => { const next = new Set(current); next.delete(item.provider); return next; });
+              consumptionTimers.current.delete(item.provider);
+            }, 5 * 60_000);
+            consumptionTimers.current.set(item.provider, timer);
+          }
+          if (nextPrimary !== undefined) previousPrimary.current.set(item.provider, nextPrimary);
         }
-        if (nextPrimary !== undefined) previousPrimary.current.set(item.provider, nextPrimary);
+        setSnapshots((current) => mergeSnapshots(current, values));
+      } catch {
+        const schedule = nextRefreshSchedule(failures.current, true);
+        failures.current = schedule.failures;
+        nextAutoRefreshAt.current = Date.now() + schedule.delayMs;
+        setSnapshots((current) => current.length > 0
+          ? current.map((item) => ({ ...item, status: "stale", message: "Refresh failed. Please try again later." }))
+          : [{ provider: "codex", displayName: "CODEX", plan: null, shortWindow: null, weeklyWindow: null, resetCredits: null, resetCreditExpiresAt: [], updatedAt: new Date().toISOString(), status: "unavailable", message: "Quota is temporarily unavailable. It will retry automatically." }]);
       }
-      setSnapshots((current) => mergeSnapshots(current, values));
-    } catch {
-      failures.current += 1;
-      setSnapshots((current) => current.length > 0
-        ? current.map((item) => ({ ...item, status: "stale", message: "Refresh failed. Please try again later." }))
-        : [{ provider: "codex", displayName: "CODEX", plan: null, shortWindow: null, weeklyWindow: null, resetCredits: null, resetCreditExpiresAt: [], updatedAt: new Date().toISOString(), status: "unavailable", message: "Quota is temporarily unavailable. It will retry automatically." }]);
-    }
+    })();
+    refreshInFlight.current = request;
+    void request.finally(() => {
+      if (refreshInFlight.current === request) refreshInFlight.current = null;
+    });
+    return request;
   }, []);
 
   const refreshTokenUsage = useCallback(async () => {
@@ -139,7 +156,7 @@ export default function App() {
       }
       if (!cancelled) setOperationError("Unable to read settings. Defaults are in use.");
     };
-    void refresh(true);
+    void refresh("manual");
     void loadPreferences();
     return () => { cancelled = true; for (const timer of consumptionTimers.current.values()) window.clearTimeout(timer); consumptionTimers.current.clear(); };
   }, [refresh]);
@@ -169,7 +186,7 @@ export default function App() {
     let cleanup: () => void = () => {};
     void listenDesktopEvents({
       onPreferences: (value) => { setPreferences({ ...DEFAULT_PREFS, ...value, language: normalizeLanguage(value.language), paletteColors: normalizePaletteColors(value.paletteColors) }); setOperationError(null); },
-      onRefresh: () => void refresh(true),
+      onRefresh: (mode) => void refresh(mode),
       onFocusLost: () => {
         hoveredRef.current = false;
         setHovered(false);
@@ -192,7 +209,7 @@ export default function App() {
   }, [refresh, scheduleCollapse]);
 
   useEffect(() => {
-    const id = window.setInterval(() => void refresh(true), REFRESH_INTERVAL_MS);
+    const id = window.setInterval(() => void refresh("auto"), REFRESH_SCHEDULER_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, [refresh]);
 
@@ -203,7 +220,7 @@ export default function App() {
   }, [refreshTokenUsage]);
 
   useEffect(() => {
-    const refreshWhenActive = () => { if (document.visibilityState === "visible") void refresh(true); };
+    const refreshWhenActive = () => { if (document.visibilityState === "visible") void refresh("auto"); };
     window.addEventListener("focus", refreshWhenActive);
     document.addEventListener("visibilitychange", refreshWhenActive);
     return () => {
@@ -250,7 +267,6 @@ export default function App() {
           setCompact(false);
         }
       }, HOVER_LIFT_MS);
-      void refresh(true);
       return;
     }
     if (hoverExpandTimer.current !== null) {
@@ -258,7 +274,7 @@ export default function App() {
       hoverExpandTimer.current = null;
     }
     scheduleCollapse(true);
-  }, [clearWidgetMotionTimers, refresh, scheduleCollapse]);
+  }, [clearWidgetMotionTimers, scheduleCollapse]);
 
   const handlePalettePreview = useCallback(() => {
     const requestClose = () => {
@@ -309,7 +325,7 @@ export default function App() {
       onLock={() => { setOperationError(null); void setAlwaysOnTop(!preferences.alwaysOnTop).then((value) => setPreferences({ ...DEFAULT_PREFS, ...value, language: normalizeLanguage(value.language) })).catch(() => setOperationError("Always-on-top toggle failed.")); }}
       onDrag={() => startDragging()}
       onHover={handleHover}
-      onRefresh={() => refresh(true)}
+      onRefresh={() => refresh("manual")}
       isConsuming={consumingProviders.has(current.provider)}
       notice={operationError}
       palettePreviewActive={palettePercent !== null}
