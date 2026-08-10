@@ -7,7 +7,7 @@ mod windows_impl {
         path::{Path, PathBuf},
         sync::{Arc, Mutex},
         thread,
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use tauri::{AppHandle, Emitter};
@@ -23,13 +23,19 @@ mod windows_impl {
 
     use crate::token_usage;
 
-    const POLL_INTERVAL: Duration = Duration::from_millis(80);
-    const TOKEN_REFRESH_TICKS: u8 = 6;
+    const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(500);
+    const BACKGROUND_POLL_INTERVAL: Duration = Duration::from_secs(1);
+    const DORMANT_POLL_INTERVAL: Duration = Duration::from_secs(2);
+    const ACTIVE_TOKEN_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+    const BACKGROUND_TOKEN_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+    const FULL_SESSION_DISCOVERY_INTERVAL: Duration = Duration::from_secs(10);
+    const LOG_DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 
     #[derive(Default)]
     struct LogTail {
         path: Option<PathBuf>,
         offset: u64,
+        last_discovery: Option<Instant>,
     }
 
     #[derive(Clone, Debug)]
@@ -136,12 +142,19 @@ mod windows_impl {
 
     impl LogTail {
         fn read_events(&mut self) -> Vec<ActivityEvent> {
-            let Some(root) = logs_root() else {
-                return Vec::new();
+            let should_discover = self.path.is_none()
+                || self
+                    .last_discovery
+                    .is_none_or(|last| last.elapsed() >= LOG_DISCOVERY_INTERVAL);
+            let path = if should_discover {
+                self.last_discovery = Some(Instant::now());
+                logs_root()
+                    .and_then(|root| newest_log(&root))
+                    .or_else(|| self.path.clone())
+            } else {
+                self.path.clone()
             };
-            let Some(path) = newest_log(&root) else {
-                return Vec::new();
-            };
+            let Some(path) = path else { return Vec::new() };
             let initial_read = self.path.as_ref() != Some(&path);
             if initial_read {
                 self.path = Some(path.clone());
@@ -186,7 +199,8 @@ mod windows_impl {
             let mut conversations: HashMap<isize, String> = HashMap::new();
             let mut latest_activity: Option<ActivityEvent> = None;
             let mut last_active_hwnd = None;
-            let mut refresh_tick = 0u8;
+            let mut last_conversation_refresh: Option<Instant> = None;
+            let mut last_full_session_discovery: Option<Instant> = None;
 
             loop {
                 let window_handles: HashSet<isize> =
@@ -197,12 +211,15 @@ mod windows_impl {
                     last_active_hwnd = Some(foreground);
                 }
 
+                let mut conversation_changed = false;
                 for event in log_tail.read_events() {
                     latest_activity = Some(event.clone());
                     if codex_app_active {
                         renderer_to_hwnd.insert(event.renderer_window_id.clone(), foreground);
                     }
                     if let Some(hwnd) = renderer_to_hwnd.get(&event.renderer_window_id).copied() {
+                        conversation_changed |=
+                            conversations.get(&hwnd) != Some(&event.conversation_id);
                         conversations.insert(hwnd, event.conversation_id);
                     }
                 }
@@ -210,6 +227,7 @@ mod windows_impl {
                     if let Some(event) = latest_activity.as_ref() {
                         renderer_to_hwnd.insert(event.renderer_window_id.clone(), foreground);
                         conversations.insert(foreground, event.conversation_id.clone());
+                        conversation_changed = true;
                     }
                 }
 
@@ -219,16 +237,36 @@ mod windows_impl {
                     last_active_hwnd = None;
                 }
 
-                refresh_tick = refresh_tick.saturating_add(1);
-                if refresh_tick >= TOKEN_REFRESH_TICKS {
-                    refresh_tick = 0;
+                let token_refresh_interval = if codex_app_active {
+                    ACTIVE_TOKEN_REFRESH_INTERVAL
+                } else {
+                    BACKGROUND_TOKEN_REFRESH_INTERVAL
+                };
+                let token_refresh_due = conversation_changed
+                    || last_conversation_refresh
+                        .is_none_or(|last| last.elapsed() >= token_refresh_interval);
+                if token_refresh_due {
                     let conversation_id = last_active_hwnd
                         .and_then(|hwnd| conversations.get(&hwnd))
                         .map(String::as_str);
-                    let payload = token_usage::scan_conversation(&cache, conversation_id);
+                    let discover = conversation_changed
+                        || last_full_session_discovery
+                            .is_none_or(|last| last.elapsed() >= FULL_SESSION_DISCOVERY_INTERVAL);
+                    let payload = token_usage::scan_conversation(&cache, conversation_id, discover);
                     let _ = app.emit_to("widget", "conversation-token-usage", payload);
+                    last_conversation_refresh = Some(Instant::now());
+                    if discover && conversation_id.is_some() {
+                        last_full_session_discovery = Some(Instant::now());
+                    }
                 }
-                thread::sleep(POLL_INTERVAL);
+                let poll_interval = if codex_app_active {
+                    ACTIVE_POLL_INTERVAL
+                } else if window_handles.is_empty() {
+                    DORMANT_POLL_INTERVAL
+                } else {
+                    BACKGROUND_POLL_INTERVAL
+                };
+                thread::sleep(poll_interval);
             }
         });
     }

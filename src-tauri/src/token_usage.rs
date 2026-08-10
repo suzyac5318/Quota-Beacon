@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File},
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Seek, SeekFrom},
     path::{Path, PathBuf},
     sync::Mutex,
     time::SystemTime,
@@ -30,6 +30,7 @@ struct FileFingerprint {
 #[derive(Clone)]
 struct CachedSessionFile {
     fingerprint: FileFingerprint,
+    parsed_len: u64,
     usage: SessionUsage,
 }
 
@@ -68,56 +69,135 @@ fn collect_jsonl_files(directory: &Path, files: &mut Vec<PathBuf>) {
 
 fn read_tokens(value: &Value) -> SessionUsage {
     SessionUsage {
-        input_tokens: value.get("input_tokens").and_then(Value::as_u64).unwrap_or(0),
+        input_tokens: value
+            .get("input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
         cached_input_tokens: value
             .get("cached_input_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(0),
-        output_tokens: value.get("output_tokens").and_then(Value::as_u64).unwrap_or(0),
+        output_tokens: value
+            .get("output_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
         reasoning_output_tokens: value
             .get("reasoning_output_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(0),
-        total_tokens: value.get("total_tokens").and_then(Value::as_u64).unwrap_or(0),
+        total_tokens: value
+            .get("total_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
         ..SessionUsage::default()
     }
 }
 
-fn parse_session<R: BufRead>(reader: R, fallback_id: String) -> SessionUsage {
-    let mut session_id = None;
-    let mut usage = SessionUsage::default();
-
-    for line in reader.lines().map_while(Result::ok) {
-        let Ok(value) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        if session_id.is_none() && value.get("type").and_then(Value::as_str) == Some("session_meta") {
-            session_id = value
-                .pointer("/payload/id")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-        }
-        let Some(total) = value.pointer("/payload/info/total_token_usage") else {
-            continue;
-        };
-        let candidate = read_tokens(total);
-        if candidate.total_tokens >= usage.total_tokens {
-            usage = candidate;
+fn apply_session_line(line: &str, usage: &mut SessionUsage) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(line) else {
+        return false;
+    };
+    if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+        if let Some(session_id) = value.pointer("/payload/id").and_then(Value::as_str) {
+            usage.session_id = session_id.to_owned();
         }
     }
+    if let Some(total) = value.pointer("/payload/info/total_token_usage") {
+        let mut candidate = read_tokens(total);
+        if candidate.total_tokens >= usage.total_tokens {
+            candidate.session_id = usage.session_id.clone();
+            *usage = candidate;
+        }
+    }
+    true
+}
 
-    usage.session_id = session_id.unwrap_or(fallback_id);
+#[cfg(test)]
+fn parse_session<R: BufRead>(reader: R, fallback_id: String) -> SessionUsage {
+    let mut usage = SessionUsage {
+        session_id: fallback_id,
+        ..SessionUsage::default()
+    };
+
+    for line in reader.lines().map_while(Result::ok) {
+        apply_session_line(&line, &mut usage);
+    }
     usage
 }
 
-fn parse_session_file(path: &Path) -> SessionUsage {
+fn parse_session_file_from(
+    path: &Path,
+    start: u64,
+    previous: Option<SessionUsage>,
+) -> (SessionUsage, u64) {
     let fallback_id = path.to_string_lossy().into_owned();
-    File::open(path)
-        .map(|file| parse_session(BufReader::new(file), fallback_id.clone()))
-        .unwrap_or_else(|_| SessionUsage {
-            session_id: fallback_id,
-            ..SessionUsage::default()
-        })
+    let mut usage = previous.unwrap_or_else(|| SessionUsage {
+        session_id: fallback_id.clone(),
+        ..SessionUsage::default()
+    });
+    let Ok(mut file) = File::open(path) else {
+        return (usage, start);
+    };
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return (
+            SessionUsage {
+                session_id: fallback_id,
+                ..SessionUsage::default()
+            },
+            0,
+        );
+    }
+    let mut reader = BufReader::new(file);
+    let mut parsed_len = start;
+    let mut line = String::new();
+    loop {
+        let line_start = reader.stream_position().unwrap_or(parsed_len);
+        line.clear();
+        let Ok(read) = reader.read_line(&mut line) else {
+            break;
+        };
+        if read == 0 {
+            break;
+        }
+        let valid = apply_session_line(&line, &mut usage);
+        if !valid && !line.ends_with('\n') {
+            parsed_len = line_start;
+            break;
+        }
+        parsed_len = reader.stream_position().unwrap_or(line_start + read as u64);
+    }
+    (usage, parsed_len)
+}
+
+fn refresh_cached_file(
+    path: &Path,
+    previous: Option<&CachedSessionFile>,
+) -> Option<CachedSessionFile> {
+    let metadata = fs::metadata(path).ok()?;
+    let fingerprint = FileFingerprint {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    };
+    if previous.is_some_and(|cached| cached.fingerprint == fingerprint) {
+        return previous.cloned();
+    }
+    let append_only = previous.is_some_and(|cached| fingerprint.len > cached.fingerprint.len);
+    let start = if append_only {
+        previous.map(|cached| cached.parsed_len).unwrap_or(0)
+    } else {
+        0
+    };
+    let previous_usage = if append_only {
+        previous.map(|cached| cached.usage.clone())
+    } else {
+        None
+    };
+    let (usage, parsed_len) = parse_session_file_from(path, start, previous_usage);
+    Some(CachedSessionFile {
+        fingerprint,
+        parsed_len,
+        usage,
+    })
 }
 
 fn add_usage(total: &mut TokenUsageSummary, usage: &SessionUsage) {
@@ -149,27 +229,9 @@ fn scan_home(cache: &Mutex<TokenUsageCache>, home: &Path) -> Result<TokenUsageSu
     cache.files.retain(|path, _| active_paths.contains(path));
 
     for path in paths {
-        let Ok(metadata) = fs::metadata(&path) else {
-            continue;
-        };
-        let fingerprint = FileFingerprint {
-            len: metadata.len(),
-            modified: metadata.modified().ok(),
-        };
-        let unchanged = cache
-            .files
-            .get(&path)
-            .is_some_and(|cached| cached.fingerprint == fingerprint);
-        if unchanged {
-            continue;
+        if let Some(refreshed) = refresh_cached_file(&path, cache.files.get(&path)) {
+            cache.files.insert(path, refreshed);
         }
-        cache.files.insert(
-            path.clone(),
-            CachedSessionFile {
-                fingerprint,
-                usage: parse_session_file(&path),
-            },
-        );
     }
 
     let mut sessions: HashMap<String, SessionUsage> = HashMap::new();
@@ -206,6 +268,7 @@ pub fn scan(cache: &Mutex<TokenUsageCache>) -> Result<TokenUsageSummary, String>
 pub fn scan_conversation(
     cache: &Mutex<TokenUsageCache>,
     conversation_id: Option<&str>,
+    discover: bool,
 ) -> ConversationTokenUsage {
     let Some(conversation_id) = conversation_id else {
         return ConversationTokenUsage {
@@ -214,7 +277,27 @@ pub fn scan_conversation(
         };
     };
 
-    let _ = scan(cache);
+    let refreshed_cached_files = if discover {
+        false
+    } else {
+        cache.lock().ok().is_some_and(|mut cache| {
+            let paths: Vec<PathBuf> = cache
+                .files
+                .iter()
+                .filter(|(_, cached)| cached.usage.session_id == conversation_id)
+                .map(|(path, _)| path.clone())
+                .collect();
+            for path in &paths {
+                if let Some(refreshed) = refresh_cached_file(path, cache.files.get(path)) {
+                    cache.files.insert(path.clone(), refreshed);
+                }
+            }
+            !paths.is_empty()
+        })
+    };
+    if discover || !refreshed_cached_files {
+        let _ = scan(cache);
+    }
     let total_tokens = cache.lock().ok().and_then(|cache| {
         cache
             .files
@@ -234,7 +317,7 @@ pub fn scan_conversation(
 mod tests {
     use std::{
         fs,
-        io::Cursor,
+        io::{Cursor, Write},
         sync::Mutex,
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -296,6 +379,49 @@ mod tests {
         assert_eq!(before.total_tokens, 270);
         assert_eq!(after.total_tokens, before.total_tokens);
         assert_eq!(after.session_count, before.session_count);
+
+        fs::remove_dir_all(&home).expect("temporary history should be removed");
+    }
+
+    #[test]
+    fn incrementally_refreshes_a_growing_session_file() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after the Unix epoch")
+            .as_nanos();
+        let home = std::env::temp_dir().join(format!(
+            "quota-beacon-token-growth-{}-{unique}",
+            std::process::id()
+        ));
+        let sessions = home.join("sessions");
+        fs::create_dir_all(&sessions).expect("sessions directory should be created");
+        let session = sessions.join("session.jsonl");
+        fs::write(
+            &session,
+            r#"{"type":"session_meta","payload":{"id":"session-1"}}
+{"type":"event_msg","payload":{"info":{"total_token_usage":{"total_tokens":110}}}}
+"#,
+        )
+        .expect("initial session log should be written");
+
+        let cache = Mutex::new(TokenUsageCache::default());
+        let before = scan_home(&cache, &home).expect("initial history scan should succeed");
+        let mut file = fs::OpenOptions::new()
+            .append(true)
+            .open(&session)
+            .expect("session log should reopen for append");
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","payload":{{"info":{{"total_token_usage":{{"total_tokens":270}}}}}}}}"#
+        )
+        .expect("new cumulative usage should append");
+        file.sync_all().expect("appended session log should flush");
+
+        let after = scan_home(&cache, &home).expect("growing history scan should succeed");
+
+        assert_eq!(before.total_tokens, 110);
+        assert_eq!(after.total_tokens, 270);
+        assert_eq!(after.session_count, 1);
 
         fs::remove_dir_all(&home).expect("temporary history should be removed");
     }
