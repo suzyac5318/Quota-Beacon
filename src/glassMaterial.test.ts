@@ -33,7 +33,7 @@ describe("Windows glass material", () => {
     expect(nativeMaterial.indexOf("enable_host_backdrop(surface)?;")).toBeLessThan(
       nativeMaterial.indexOf("CreateHostBackdropBrush"),
     );
-    expect(nativeMaterial).toContain("BLUR_AMOUNT: f32 = 8.0");
+    expect(nativeMaterial).toContain("BLUR_AMOUNT: f32 = 6.0");
     expect(nativeMaterial).toContain("BLUR_EDGE_INSET: f32 = 1.0");
     expect(nativeMaterial).toContain("CONTROL_RADIUS: f32 = 24.0");
     expect(nativeMaterial).toContain("CreateRoundedRectangleGeometry");
