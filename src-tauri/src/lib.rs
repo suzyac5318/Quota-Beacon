@@ -236,11 +236,11 @@ fn open_palette_preview(
         .map_err(|error| format!("failed to show palette editor window: {error}"))?;
     if let Some(widget) = app.get_webview_window("widget") {
         let _ = widget.set_always_on_top(true);
-        window_material::sync_window_material(&app);
     }
     let _ = palette.set_always_on_top(true);
     let _ = editor.set_always_on_top(true);
     position_palette_windows(&app)?;
+    window_material::sync_window_material(&app);
     let colors = state
         .preferences
         .lock()
@@ -266,6 +266,7 @@ fn finish_palette_preview(app: &AppHandle) {
     if let Some(editor) = app.get_webview_window("palette-editor") {
         let _ = editor.hide();
     }
+    window_material::sync_window_material(app);
     if let Some(state) = app.try_state::<AppState>() {
         if let Ok(preferences) = state.preferences.lock() {
             if let Some(widget) = app.get_webview_window("widget") {
@@ -611,15 +612,18 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
-            if window.label() == "widget"
-                && matches!(
-                    event,
-                    WindowEvent::Moved(_)
-                        | WindowEvent::Resized(_)
-                        | WindowEvent::ScaleFactorChanged { .. }
-                )
-            {
+            let material_window =
+                ["widget", "palette", "palette-editor"].contains(&window.label());
+            let material_geometry_changed = matches!(
+                event,
+                WindowEvent::Moved(_)
+                    | WindowEvent::Resized(_)
+                    | WindowEvent::ScaleFactorChanged { .. }
+            );
+            if material_window && material_geometry_changed {
                 window_material::sync_window_material(window.app_handle());
+            }
+            if window.label() == "widget" && material_geometry_changed {
                 let _ = position_palette_windows(window.app_handle());
             }
             if ["widget", "palette", "palette-editor"].contains(&window.label())

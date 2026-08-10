@@ -63,6 +63,8 @@ const COMPACT_RADIUS: f32 = 28.0;
 #[cfg(target_os = "windows")]
 const EXPANDED_RADIUS: f32 = 38.0;
 #[cfg(target_os = "windows")]
+const CONTROL_RADIUS: f32 = 24.0;
+#[cfg(target_os = "windows")]
 const BLUR_EDGE_INSET: f32 = 1.0;
 #[cfg(target_os = "windows")]
 const BLUR_AMOUNT: f32 = 8.0;
@@ -100,8 +102,6 @@ const MORPH_KEYFRAMES: [(f64, f64); 15] = [
 static CLIP_GENERATION: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_os = "windows")]
 static CLIP_PROGRESS: AtomicI32 = AtomicI32::new(0);
-#[cfg(target_os = "windows")]
-static INITIAL_SYNC_VERIFIED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "windows")]
 static WEBVIEW_SCALE_BITS: AtomicU32 = AtomicU32::new(0);
 #[cfg(target_os = "windows")]
@@ -195,9 +195,19 @@ struct CompositionSurface {
 
 #[cfg(target_os = "windows")]
 struct BlurWindow {
+    label: &'static str,
+    kind: BlurWindowKind,
     parent: isize,
     surface: isize,
+    sync_verified: AtomicBool,
     composition: CompositionSurface,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BlurWindowKind {
+    Widget,
+    Control,
 }
 
 #[cfg(target_os = "windows")]
@@ -211,7 +221,7 @@ struct SurfaceGeometry {
 }
 
 #[cfg(target_os = "windows")]
-static BLUR_WINDOW: OnceLock<Mutex<Option<BlurWindow>>> = OnceLock::new();
+static BLUR_WINDOWS: OnceLock<Mutex<Vec<BlurWindow>>> = OnceLock::new();
 #[cfg(target_os = "windows")]
 static WINDOW_CLASS: OnceLock<Result<(), String>> = OnceLock::new();
 #[cfg(target_os = "windows")]
@@ -437,9 +447,7 @@ fn morph_curve(linear: f64) -> f64 {
 #[cfg(target_os = "windows")]
 fn widget_geometry(parent: RECT, scale: f32, progress: f32) -> SurfaceGeometry {
     let progress = progress.clamp(-0.05, 1.05);
-    let outer_x = (COMPACT_INSET * scale * (1.0 - progress))
-        .ceil()
-        .max(0.0) as i32;
+    let outer_x = (COMPACT_INSET * scale * (1.0 - progress)).ceil().max(0.0) as i32;
     let outer_y = outer_x;
     let parent_width = parent.right - parent.left;
     let parent_height = parent.bottom - parent.top;
@@ -472,18 +480,32 @@ fn widget_geometry(parent: RECT, scale: f32, progress: f32) -> SurfaceGeometry {
 }
 
 #[cfg(target_os = "windows")]
-fn active_widget_scale(app: &AppHandle) -> f32 {
-    let stored = f32::from_bits(WEBVIEW_SCALE_BITS.load(Ordering::SeqCst));
-    if stored.is_finite() && (0.5..=5.0).contains(&stored) {
-        return stored;
+fn control_geometry(parent: RECT, scale: f32) -> SurfaceGeometry {
+    let edge_inset = (BLUR_EDGE_INSET * scale).ceil().max(1.0) as i32;
+    SurfaceGeometry {
+        x: edge_inset,
+        y: edge_inset,
+        width: (parent.right - parent.left - edge_inset * 2).max(1),
+        height: (parent.bottom - parent.top - edge_inset * 2).max(1),
+        radius: ((CONTROL_RADIUS - BLUR_EDGE_INSET) * scale).max(0.0),
     }
-    app.get_webview_window("widget")
+}
+
+#[cfg(target_os = "windows")]
+fn active_window_scale(app: &AppHandle, label: &str) -> f32 {
+    if label == "widget" {
+        let stored = f32::from_bits(WEBVIEW_SCALE_BITS.load(Ordering::SeqCst));
+        if stored.is_finite() && (0.5..=5.0).contains(&stored) {
+            return stored;
+        }
+    }
+    app.get_webview_window(label)
         .and_then(|window| window.scale_factor().ok())
         .unwrap_or(1.0) as f32
 }
 
 #[cfg(target_os = "windows")]
-fn sync_blur_window(window: &BlurWindow, scale: f32) -> Result<(), String> {
+fn sync_blur_window(window: &BlurWindow, app: &AppHandle) -> Result<(), String> {
     let parent = window.parent as HWND;
     let surface = window.surface as HWND;
     if unsafe { IsWindowVisible(parent) } == 0 {
@@ -494,8 +516,14 @@ fn sync_blur_window(window: &BlurWindow, scale: f32) -> Result<(), String> {
     if unsafe { GetWindowRect(parent, &mut parent_rect) } == 0 {
         return Err("GetWindowRect failed".to_string());
     }
-    let progress = CLIP_PROGRESS.load(Ordering::SeqCst) as f32 / 1000.0;
-    let geometry = widget_geometry(parent_rect, scale, progress);
+    let scale = active_window_scale(app, window.label);
+    let geometry = match window.kind {
+        BlurWindowKind::Widget => {
+            let progress = CLIP_PROGRESS.load(Ordering::SeqCst) as f32 / 1000.0;
+            widget_geometry(parent_rect, scale, progress)
+        }
+        BlurWindowKind::Control => control_geometry(parent_rect, scale),
+    };
     let size = Vector2 {
         X: geometry.width as f32,
         Y: geometry.height as f32,
@@ -562,9 +590,10 @@ fn sync_blur_window(window: &BlurWindow, scale: f32) -> Result<(), String> {
             actual.bottom
         ));
     }
-    if !INITIAL_SYNC_VERIFIED.swap(true, Ordering::SeqCst) {
+    if !window.sync_verified.swap(true, Ordering::SeqCst) {
         eprintln!(
-            "light blur verified: host backdrop enabled, parent {}x{}, surface {}x{} at ({}, {})",
+            "{} light blur verified: host backdrop enabled, parent {}x{}, surface {}x{} at ({}, {})",
+            window.label,
             parent_rect.right - parent_rect.left,
             parent_rect.bottom - parent_rect.top,
             geometry.width,
@@ -578,18 +607,16 @@ fn sync_blur_window(window: &BlurWindow, scale: f32) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 pub fn sync_window_material(app: &AppHandle) {
-    let scale = active_widget_scale(app);
-    let Some(slot) = BLUR_WINDOW.get() else {
+    let Some(slot) = BLUR_WINDOWS.get() else {
         return;
     };
     let Ok(slot) = slot.lock() else {
         return;
     };
-    let Some(window) = slot.as_ref() else {
-        return;
-    };
-    if let Err(error) = sync_blur_window(window, scale) {
-        eprintln!("light blur sync failed: {error}");
+    for window in slot.iter() {
+        if let Err(error) = sync_blur_window(window, app) {
+            eprintln!("{} light blur sync failed: {error}", window.label);
+        }
     }
 }
 
@@ -611,13 +638,13 @@ pub fn set_widget_css_scale(app: &AppHandle, scale: f32) {
 
 #[cfg(target_os = "windows")]
 pub fn hide_window_material() {
-    let Some(slot) = BLUR_WINDOW.get() else {
+    let Some(slot) = BLUR_WINDOWS.get() else {
         return;
     };
     let Ok(slot) = slot.lock() else {
         return;
     };
-    if let Some(window) = slot.as_ref() {
+    for window in slot.iter() {
         unsafe { ShowWindow(window.surface as HWND, SW_HIDE) };
     }
 }
@@ -681,52 +708,65 @@ pub fn apply_window_materials(app: &AppHandle) {
         eprintln!("light blur skipped: widget window missing");
         return;
     };
-    let Ok(parent) = widget.hwnd() else {
-        eprintln!("light blur skipped: widget HWND unavailable");
-        return;
-    };
-    let scale = active_widget_scale(app);
+    let widget_scale = active_window_scale(app, "widget");
     let expanded = widget
         .outer_size()
-        .map(|size| size.width as f64 / scale as f64 > 120.0)
+        .map(|size| size.width as f64 / widget_scale as f64 > 120.0)
         .unwrap_or(false);
     CLIP_PROGRESS.store(if expanded { 1000 } else { 0 }, Ordering::SeqCst);
-    let slot = BLUR_WINDOW.get_or_init(|| Mutex::new(None));
+    let slot = BLUR_WINDOWS.get_or_init(|| Mutex::new(Vec::new()));
     let Ok(mut slot) = slot.lock() else {
         return;
     };
-    if slot.is_none() {
+    for (label, kind) in [
+        ("widget", BlurWindowKind::Widget),
+        ("palette", BlurWindowKind::Control),
+        ("palette-editor", BlurWindowKind::Control),
+    ] {
+        if slot.iter().any(|window| window.label == label) {
+            continue;
+        }
+        let Some(parent_window) = app.get_webview_window(label) else {
+            eprintln!("{label} light blur skipped: window missing");
+            continue;
+        };
+        let Ok(parent) = parent_window.hwnd() else {
+            eprintln!("{label} light blur skipped: HWND unavailable");
+            continue;
+        };
         match create_blur_window() {
             Ok((surface, composition)) => {
-                *slot = Some(BlurWindow {
+                slot.push(BlurWindow {
+                    label,
+                    kind,
                     parent: parent.0 as isize,
                     surface: surface as isize,
+                    sync_verified: AtomicBool::new(false),
                     composition,
                 });
-                eprintln!("light rounded host-backdrop blur attached");
+                eprintln!("{label} light rounded host-backdrop blur attached");
             }
             Err(error) => {
-                eprintln!("light blur unavailable: {error}");
-                return;
+                eprintln!("{label} light blur unavailable: {error}");
             }
         }
     }
-    if let Some(window) = slot.as_ref() {
-        if let Err(error) = sync_blur_window(window, scale) {
-            eprintln!("light blur initial sync failed: {error}");
+    for window in slot.iter() {
+        if let Err(error) = sync_blur_window(window, app) {
+            eprintln!("{} light blur initial sync failed: {error}", window.label);
         }
     }
 }
 
 #[cfg(target_os = "windows")]
 pub fn destroy_window_materials() {
-    let Some(slot) = BLUR_WINDOW.get() else {
+    let Some(slot) = BLUR_WINDOWS.get() else {
         return;
     };
     let Ok(mut slot) = slot.lock() else {
         return;
     };
-    if let Some(window) = slot.take() {
+    for window in slot.drain(..) {
         if unsafe { IsWindow(window.surface as HWND) } != 0 {
             unsafe { DestroyWindow(window.surface as HWND) };
         }
@@ -770,6 +810,20 @@ mod tests {
                 width: 508,
                 height: 508,
                 radius: 59.2,
+            }
+        );
+    }
+
+    #[test]
+    fn control_blur_stays_inside_internal_stroke() {
+        assert_eq!(
+            control_geometry(rect(512, 166), 1.6),
+            SurfaceGeometry {
+                x: 2,
+                y: 2,
+                width: 508,
+                height: 162,
+                radius: 36.8,
             }
         );
     }

@@ -35,15 +35,20 @@ describe("Windows glass material", () => {
     );
     expect(nativeMaterial).toContain("BLUR_AMOUNT: f32 = 8.0");
     expect(nativeMaterial).toContain("BLUR_EDGE_INSET: f32 = 1.0");
+    expect(nativeMaterial).toContain("CONTROL_RADIUS: f32 = 24.0");
     expect(nativeMaterial).toContain("CreateRoundedRectangleGeometry");
     expect(nativeMaterial).toContain("CreateGeometricClipWithGeometry");
     expect(nativeMaterial).toContain("SetCornerRadius");
     expect(nativeMaterial).toContain("compact_blur_stays_inside_css_border");
     expect(nativeMaterial).toContain("expanded_blur_stays_inside_css_border");
+    expect(nativeMaterial).toContain("control_blur_stays_inside_internal_stroke");
     expect(nativeMaterial).toContain("compact_surface_stays_eighty_pixels_after_parent_expands");
     expect(nativeMaterial).toContain("native_morph_curve_matches_css_keyframes");
     expect(nativeMaterial).toContain("compact_surface_tracks_webview_pixel_scale_without_corner_overhang");
     expect(nativeMaterial).toContain("WEBVIEW_SCALE_BITS");
+    expect(nativeMaterial).toContain("BLUR_WINDOWS");
+    expect(nativeMaterial).toContain('(\"palette\", BlurWindowKind::Control)');
+    expect(nativeMaterial).toContain('(\"palette-editor\", BlurWindowKind::Control)');
     expect(nativeMaterial).toContain("EXPAND_MORPH_MS: u64 = 400");
     expect(nativeMaterial).toContain("COLLAPSE_MORPH_DELAY_MS: u64 = 90");
     expect(nativeMaterial).toContain("COLLAPSE_MORPH_MS: u64 = 190");
@@ -64,6 +69,8 @@ describe("Windows glass material", () => {
     expect(frontendApp).toContain("syncWidgetCssScale(window.innerWidth)");
     expect(frontendApp).toContain('window.visualViewport?.addEventListener("resize", syncScale)');
     expect(frontendBridge).toContain("physicalSize.width / cssViewportWidth");
+    expect(nativeApp).toContain('position_palette_windows(&app)?;\n    window_material::sync_window_material(&app);');
+    expect(nativeApp).toContain('[\"widget\", \"palette\", \"palette-editor\"].contains(&window.label())');
   });
 
   it("retains the v1.6.1 glass colors and accessibility fallbacks", () => {
@@ -80,5 +87,14 @@ describe("Windows glass material", () => {
     expect(styles).not.toContain("0 5px 16px rgba(37,45,60,.1)");
     expect(styles).not.toContain("0 8px 22px rgba(72,88,112,.15)");
     expect(styles).not.toContain("0 4px 14px rgba(72,88,112,.08)");
+    expect(styles).not.toContain("0 8px 24px rgba(37,45,60,.1)");
+  });
+
+  it("draws one internal stroke for all three glass cards", () => {
+    expect(styles.match(/box-shadow: inset 0 0 0 1px var\(--glass-border\)/g)?.length).toBeGreaterThanOrEqual(5);
+    expect(styles).not.toContain("box-shadow: inset 0 1px 0 var(--glass-highlight)");
+    expect(styles).toContain(".palette-preview { width: 100%; height: 100%; overflow: hidden; padding: 15px 18px 14px; border: 1px solid transparent;");
+    expect(styles).toContain(".palette-editor { width: 100%; height: 100%; overflow: hidden; padding: 11px 16px 10px; border: 1px solid transparent;");
+    expect(styles.match(/backdrop-filter: blur\(24px\) saturate\(1\.22\)/g)?.length).toBeGreaterThanOrEqual(3);
   });
 });
