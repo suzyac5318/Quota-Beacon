@@ -93,7 +93,9 @@ describe("Windows glass material", () => {
   });
 
   it("draws one internal stroke for all three glass cards", () => {
-    expect(styles.match(/box-shadow: inset 0 0 0 1px var\(--glass-border\)/g)?.length).toBeGreaterThanOrEqual(5);
+    expect(styles).toContain("--glass-stroke-width: .5px");
+    expect(styles.match(/box-shadow: inset 0 0 0 var\(--glass-stroke-width\) var\(--glass-border\)/g)?.length).toBeGreaterThanOrEqual(5);
+    expect(styles).not.toContain("inset 0 0 0 1px var(--glass-border)");
     expect(styles).not.toContain("box-shadow: inset 0 1px 0 var(--glass-highlight)");
     expect(styles).toContain(".palette-preview { width: 100%; height: 100%; overflow: hidden; padding: 15px 18px 14px; border: 1px solid transparent;");
     expect(styles).toContain(".palette-editor { width: 100%; height: 100%; overflow: hidden; padding: 11px 16px 10px; border: 1px solid transparent;");
