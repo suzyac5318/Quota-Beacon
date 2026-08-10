@@ -39,9 +39,9 @@ describe("quotaThemeStyle", () => {
 
   it("separates glass tint weights from the opaque quota color", () => {
     const style = quotaThemeStyle(60);
-    expect(style["--glass-card-tint"]).toBe(`color-mix(in srgb, ${style["--card-base"]} 20%, transparent)`);
-    expect(style["--glass-orb-tint"]).toBe(`color-mix(in srgb, ${style["--card-base"]} 16%, transparent)`);
-    expect(style["--glass-control-tint"]).toBe(`color-mix(in srgb, ${style["--card-base"]} 18%, transparent)`);
+    expect(style["--glass-card-tint"]).toBe(`color-mix(in srgb, ${style["--card-base"]} 16%, transparent)`);
+    expect(style["--glass-orb-tint"]).toBe(`color-mix(in srgb, ${style["--card-base"]} 13%, transparent)`);
+    expect(style["--glass-control-tint"]).toBe(`color-mix(in srgb, ${style["--card-base"]} 16%, transparent)`);
   });
 
   it("clamps out-of-range values", () => {

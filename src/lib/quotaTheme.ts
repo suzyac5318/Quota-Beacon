@@ -88,9 +88,9 @@ export function quotaThemeStyle(percent: number, colors?: readonly string[] | nu
 
   return {
     "--card-base": base,
-    "--glass-card-tint": `color-mix(in srgb, ${base} 20%, transparent)`,
-    "--glass-orb-tint": `color-mix(in srgb, ${base} 16%, transparent)`,
-    "--glass-control-tint": `color-mix(in srgb, ${base} 18%, transparent)`,
+    "--glass-card-tint": `color-mix(in srgb, ${base} 16%, transparent)`,
+    "--glass-orb-tint": `color-mix(in srgb, ${base} 13%, transparent)`,
+    "--glass-control-tint": `color-mix(in srgb, ${base} 16%, transparent)`,
     "--card-foreground": "#17191f",
     "--card-muted": "rgba(23,25,31,.66)",
     "--cool": mixHex(base, "#7497c8", 0.18),

@@ -75,10 +75,10 @@ describe("Windows glass material", () => {
     expect(nativeApp).toContain('[\"widget\", \"palette\", \"palette-editor\"].contains(&window.label())');
   });
 
-  it("retains the v1.6.1 glass colors and accessibility fallbacks", () => {
-    expect(styles).toContain("--glass-card-surface: rgba(255,255,255,.38)");
-    expect(styles).toContain("--glass-orb-surface: rgba(255,255,255,.3)");
-    expect(styles).toContain("--glass-control-surface: rgba(255,255,255,.42)");
+  it("keeps the more transparent glass colors and accessibility fallbacks", () => {
+    expect(styles).toContain("--glass-card-surface: rgba(255,255,255,.32)");
+    expect(styles).toContain("--glass-orb-surface: rgba(255,255,255,.26)");
+    expect(styles).toContain("--glass-control-surface: rgba(255,255,255,.34)");
     expect(styles).toContain("@media (prefers-reduced-transparency: reduce)");
     expect(styles).toContain("@media (prefers-contrast: more)");
     expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
@@ -99,6 +99,6 @@ describe("Windows glass material", () => {
     expect(styles).not.toContain("box-shadow: inset 0 1px 0 var(--glass-highlight)");
     expect(styles).toContain(".palette-preview { width: 100%; height: 100%; overflow: hidden; padding: 15px 18px 14px; border: 1px solid transparent;");
     expect(styles).toContain(".palette-editor { width: 100%; height: 100%; overflow: hidden; padding: 11px 16px 10px; border: 1px solid transparent;");
-    expect(styles.match(/backdrop-filter: blur\(24px\) saturate\(1\.22\)/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(styles.match(/backdrop-filter: blur\(18px\) saturate\(1\.18\)/g)?.length).toBeGreaterThanOrEqual(3);
   });
 });
