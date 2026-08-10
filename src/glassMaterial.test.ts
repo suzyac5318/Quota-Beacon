@@ -68,6 +68,8 @@ describe("Windows glass material", () => {
     expect(nativeApp).toContain("set_widget_css_scale");
     expect(frontendApp).toContain("syncWidgetCssScale(window.innerWidth)");
     expect(frontendApp).toContain('window.visualViewport?.addEventListener("resize", syncScale)');
+    expect(frontendBridge).toContain("getCurrentWindow().innerSize()");
+    expect(frontendBridge).not.toContain("getCurrentWindow().outerSize()");
     expect(frontendBridge).toContain("physicalSize.width / cssViewportWidth");
     expect(nativeApp).toContain('position_palette_windows(&app)?;\n    window_material::sync_window_material(&app);');
     expect(nativeApp).toContain('[\"widget\", \"palette\", \"palette-editor\"].contains(&window.label())');

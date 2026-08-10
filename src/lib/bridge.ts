@@ -94,7 +94,11 @@ export async function syncWidgetCssScale(cssViewportWidth: number): Promise<void
     import("@tauri-apps/api/core"),
     import("@tauri-apps/api/window"),
   ]);
-  const physicalSize = await getCurrentWindow().outerSize();
+  // `outerSize()` includes the invisible Win32 frame around a transparent
+  // window. The WebView viewport occupies the client area, so using the outer
+  // width overestimates the CSS-to-physical scale and lets the native blur
+  // surface protrude beyond the card's antialiased corners.
+  const physicalSize = await getCurrentWindow().innerSize();
   const scale = physicalSize.width / cssViewportWidth;
   if (!Number.isFinite(scale) || scale <= 0) return;
   await invoke("set_widget_css_scale", { scale });
