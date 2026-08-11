@@ -1,10 +1,9 @@
-import { Check, PencilSimple, Plus, Trash, X } from "@phosphor-icons/react";
+import { Check, PencilSimple, Plus, Trash } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import {
   accountCopy,
   beginAccountLogin,
   cancelAccountLogin,
-  closeAccountSwitcher,
   deleteAccount,
   getAccountVault,
   listenAccountEvents,
@@ -27,6 +26,7 @@ export function AccountSwitcher() {
   const [login, setLogin] = useState<AccountLoginStatus | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [addFormOpen, setAddFormOpen] = useState(false);
   const t = useMemo(() => accountCopy(language), [language]);
 
   useEffect(() => {
@@ -44,6 +44,7 @@ export function AccountSwitcher() {
         setLogin(status);
         if (status.status === "completed") {
           setAlias("");
+          setAddFormOpen(false);
           void getAccountVault().then(setVault);
         } else if (status.status === "failed") {
           setNotice(status.message);
@@ -62,7 +63,7 @@ export function AccountSwitcher() {
   const handleSaveCurrent = async () => {
     setBusyId("save-current");
     setNotice(null);
-    try { setVault(await saveCurrentAccount(alias)); setAlias(""); } catch (error) { setNotice(String(error)); } finally { setBusyId(null); }
+    try { setVault(await saveCurrentAccount(alias)); setAlias(""); setAddFormOpen(false); } catch (error) { setNotice(String(error)); } finally { setBusyId(null); }
   };
 
   const handleAdd = async (replaceProfileId: string | null = null, nextAlias = alias) => {
@@ -80,7 +81,7 @@ export function AccountSwitcher() {
     <main className="account-switcher" aria-label={t.title}>
       <header className="account-switcher__header">
         <div><h1>{t.title}</h1><p>{t.localTokens}</p></div>
-        <button type="button" onClick={() => void closeAccountSwitcher()} aria-label={t.close} title={t.close}><X /></button>
+        <button type="button" onClick={() => setAddFormOpen(true)} aria-label={t.add} title={t.add} aria-expanded={addFormOpen} aria-controls="account-add-form"><Plus /></button>
       </header>
 
       <section className="account-switcher__body" aria-live="polite">
@@ -100,16 +101,18 @@ export function AccountSwitcher() {
         ))}
       </section>
 
-      <footer className="account-switcher__footer">
-        <label><span>{t.alias}</span><input value={alias} maxLength={32} onChange={(event) => setAlias(event.target.value)} /></label>
-        {login?.status === "running" ? (
-          <button type="button" className="account-secondary" onClick={() => void handleCancel()}>{t.cancel}</button>
-        ) : !vault?.currentLoginSaved ? (
-          <button type="button" disabled={!alias.trim() || busyId !== null} onClick={() => void handleSaveCurrent()}>{t.saveCurrent}</button>
-        ) : (
-          <button type="button" disabled={!alias.trim()} onClick={() => void handleAdd()}><Plus />{t.add}</button>
-        )}
-      </footer>
+      {addFormOpen || login?.status === "running" ? (
+        <footer className="account-switcher__footer" id="account-add-form">
+          <label><span>{t.alias}</span><input value={alias} maxLength={32} autoFocus onChange={(event) => setAlias(event.target.value)} /></label>
+          {login?.status === "running" ? (
+            <button type="button" className="account-secondary" onClick={() => void handleCancel()}>{t.cancel}</button>
+          ) : !vault?.currentLoginSaved ? (
+            <button type="button" disabled={!alias.trim() || busyId !== null} onClick={() => void handleSaveCurrent()}>{t.saveCurrent}</button>
+          ) : (
+            <button type="button" disabled={!alias.trim()} onClick={() => void handleAdd()}><Plus />{t.add}</button>
+          )}
+        </footer>
+      ) : null}
       {login?.status === "running" ? <p className="account-notice" role="status">{t.browser}</p> : notice ? <p className="account-notice" role="status">{notice}</p> : null}
     </main>
   );

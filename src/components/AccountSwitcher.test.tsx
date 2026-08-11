@@ -32,6 +32,11 @@ describe("AccountSwitcher", () => {
     const view = render(<AccountSwitcher />);
     await waitFor(() => expect(view.getByText("请先显式保存当前 Codex 登录，再添加其他账号。")).not.toBeNull());
     expect(mocks.saveCurrentAccount).not.toHaveBeenCalled();
+    expect(view.queryByLabelText("账号名称")).toBeNull();
+    const addButton = view.getByRole("button", { name: "添加账号" });
+    expect(addButton.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(addButton);
+    expect(addButton.getAttribute("aria-expanded")).toBe("true");
     fireEvent.change(view.getByLabelText("账号名称"), { target: { value: "个人号" } });
     fireEvent.click(view.getByRole("button", { name: "保存当前账号" }));
     await waitFor(() => expect(mocks.saveCurrentAccount).toHaveBeenCalledWith("个人号"));
