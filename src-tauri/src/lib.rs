@@ -907,14 +907,14 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 fn build_tray_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let show = MenuItem::with_id(app, "show", "Show / Hide", true, None::<&str>)?;
-    let refresh = MenuItem::with_id(app, "refresh", "Refresh now", true, None::<&str>)?;
-    let unlock = MenuItem::with_id(app, "unlock", "Unlock widget", true, None::<&str>)?;
-    let pin = MenuItem::with_id(app, "pin", "Pin / Unpin Codex", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "显示 / 隐藏", true, None::<&str>)?;
+    let refresh = MenuItem::with_id(app, "refresh", "立即刷新", true, None::<&str>)?;
+    let unlock = MenuItem::with_id(app, "unlock", "解锁小组件", true, None::<&str>)?;
+    let pin = MenuItem::with_id(app, "pin", "置顶 / 取消置顶 Codex", true, None::<&str>)?;
     let language = MenuItem::with_id(
         app,
         "language",
-        "Switch Language / 切换语言",
+        "切换语言",
         true,
         None::<&str>,
     )?;
@@ -922,12 +922,12 @@ fn build_tray_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<
     let autostart = CheckMenuItem::with_id(
         app,
         "autostart",
-        "Start at login",
+        "开机启动",
         true,
         autostart_enabled,
         None::<&str>,
     )?;
-    let accounts = Submenu::new(app, "Codex accounts / Codex 账号", true)?;
+    let accounts = Submenu::new(app, "Codex 账号", true)?;
     if let Some(state) = app.try_state::<AppState>() {
         if let Ok(vault) = state.account_vault.lock() {
             if let Ok(view) = vault.view() {
@@ -945,9 +945,9 @@ fn build_tray_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<
             }
         }
     }
-    let manage_accounts = MenuItem::with_id(app, "account-manage", "Manage accounts… / 管理账号…", true, None::<&str>)?;
+    let manage_accounts = MenuItem::with_id(app, "account-manage", "管理账号…", true, None::<&str>)?;
     accounts.append(&manage_accounts)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[&show, &refresh, &accounts, &unlock, &pin, &language, &autostart, &quit],
