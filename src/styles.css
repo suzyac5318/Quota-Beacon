@@ -251,7 +251,6 @@ button { font: inherit; }
 .account-switcher__body::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .account-empty { padding: 12px; border-radius: 12px; color: rgba(23,25,31,.65); background: rgba(255,255,255,.34); font-size: 10px; line-height: 1.5; }
 .account-row { min-height: 43px; display: grid; grid-template-columns: 16px minmax(0,1fr) auto auto auto auto auto; align-items: center; gap: 4px; padding: 6px 7px; border: 1px solid rgba(23,25,31,.08); border-radius: 12px; background: rgba(255,255,255,.4); }
-.account-row .account-restart-button { max-width: 48px; height: auto; min-height: 23px; padding: 3px 6px; line-height: 1.1; white-space: normal; }
 .account-row--active { border-color: rgba(52,111,82,.24); background: rgba(232,249,239,.58); }
 .account-row__status { width: 16px; height: 16px; display: grid; place-items: center; border-radius: 50%; color: white; background: rgba(57,122,88,.88); }
 .account-row__status:empty { background: rgba(23,25,31,.08); }

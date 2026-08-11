@@ -6,8 +6,9 @@ import { AccountSwitcher } from "./AccountSwitcher";
 
 const mocks = vi.hoisted(() => ({
   saveCurrentAccount: vi.fn(),
+  getAccountVault: vi.fn(),
   setAccountSwitcherExpanded: vi.fn(async () => undefined),
-  accountHandlers: null as null | { onOpened?: () => void },
+  accountHandlers: null as null | { onOpened?: () => void; onSwitched?: () => void },
 }));
 
 vi.mock("../lib/accounts", () => ({
@@ -18,13 +19,13 @@ vi.mock("../lib/accounts", () => ({
     switched: "凭据已切换；重启 Codex 后完整生效。", invalid: "重新登录", restart: "切换并重启", restartConfirm: "重启确认", localTokens: "Token 统计继续显示本机全部 Codex 会话累计。",
   }),
   beginAccountLogin: vi.fn(), cancelAccountLogin: vi.fn(), closeAccountSwitcher: vi.fn(), deleteAccount: vi.fn(),
-  getAccountVault: vi.fn(async () => ({ profiles: [], activeProfileId: null, hasCurrentLogin: true, currentLoginSaved: false })),
-  listenAccountEvents: vi.fn(async (handlers: { onOpened?: () => void }) => { mocks.accountHandlers = handlers; return () => {}; }), pollAccountLogin: vi.fn(), renameAccount: vi.fn(),
+  getAccountVault: mocks.getAccountVault,
+  listenAccountEvents: vi.fn(async (handlers: { onOpened?: () => void; onSwitched?: () => void }) => { mocks.accountHandlers = handlers; return () => {}; }), pollAccountLogin: vi.fn(), renameAccount: vi.fn(),
   saveCurrentAccount: mocks.saveCurrentAccount.mockResolvedValue({
     profiles: [{ id: "personal", alias: "个人号", maskedEmail: "p***@example.com", isActive: true, credentialStatus: "ready" }],
     activeProfileId: "personal", hasCurrentLogin: true, currentLoginSaved: true,
   }),
-  switchAccount: vi.fn(), switchAccountAndRestartCodex: vi.fn(),
+  switchAccount: vi.fn(),
 }));
 
 vi.mock("../lib/bridge", () => ({
@@ -37,6 +38,7 @@ describe("AccountSwitcher", () => {
     cleanup();
     mocks.accountHandlers = null;
     mocks.saveCurrentAccount.mockClear();
+    mocks.getAccountVault.mockReset().mockResolvedValue({ profiles: [], activeProfileId: null, hasCurrentLogin: true, currentLoginSaved: false });
     mocks.setAccountSwitcherExpanded.mockClear();
   });
 
@@ -80,5 +82,23 @@ describe("AccountSwitcher", () => {
     expect(view.container.querySelector(".account-switcher__form-shell")?.getAttribute("aria-hidden")).toBe("true");
     expect(aliasInput.disabled).toBe(true);
     expect(aliasInput.value).toBe("");
+  });
+
+  it("reserves native window space for switch notices without showing a restart button", async () => {
+    mocks.getAccountVault.mockResolvedValue({
+      profiles: [
+        { id: "personal", alias: "个人号", maskedEmail: "p***@example.com", isActive: true, credentialStatus: "ready" },
+        { id: "work", alias: "工作号", maskedEmail: "w***@example.com", isActive: false, credentialStatus: "ready" },
+      ],
+      activeProfileId: "personal", hasCurrentLogin: true, currentLoginSaved: true,
+    });
+    const view = render(<AccountSwitcher />);
+    await waitFor(() => expect(view.getByRole("button", { name: "切换" })).not.toBeNull());
+    expect(view.queryByRole("button", { name: "切换并重启" })).toBeNull();
+
+    act(() => mocks.accountHandlers?.onSwitched?.());
+
+    await waitFor(() => expect(view.getByRole("status").textContent).toContain("重启 Codex 后完整生效"));
+    await waitFor(() => expect(mocks.setAccountSwitcherExpanded).toHaveBeenLastCalledWith(false, false, true));
   });
 });

@@ -11,7 +11,6 @@ import {
   renameAccount,
   saveCurrentAccount,
   switchAccount,
-  switchAccountAndRestartCodex,
   type AccountLoginStatus,
   type AccountVault,
 } from "../lib/accounts";
@@ -90,12 +89,13 @@ export function AccountSwitcher() {
   };
 
   const addFormVisible = addFormOpen || login?.status === "running";
+  const noticeVisible = login?.status === "running" || notice !== null;
 
   useEffect(() => {
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-    void setAccountSwitcherExpanded(addFormVisible, reducedMotion).catch((error) => setNotice(String(error)));
+    void setAccountSwitcherExpanded(addFormVisible, reducedMotion, noticeVisible).catch((error) => setNotice(String(error)));
     if (addFormVisible) aliasInputRef.current?.focus();
-  }, [addFormVisible]);
+  }, [addFormVisible, noticeVisible]);
 
   return (
     <main className={`account-switcher${addFormVisible ? " account-switcher--expanded" : ""}`} aria-label={t.title}>
@@ -113,7 +113,6 @@ export function AccountSwitcher() {
             <div><strong>{profile.alias}</strong><small>{profile.maskedEmail ?? "—"}</small></div>
             <span className="account-row__label">{profile.isActive ? t.current : profile.credentialStatus === "invalid" ? t.invalid : ""}</span>
             {!profile.isActive && profile.credentialStatus === "ready" ? <button type="button" disabled={busyId !== null} onClick={() => { setBusyId(profile.id); setNotice(null); void switchAccount(profile.id).then(() => getAccountVault()).then(setVault).catch((error) => setNotice(String(error))).finally(() => setBusyId(null)); }}>{t.switch}</button> : null}
-            {!profile.isActive && profile.credentialStatus === "ready" ? <button type="button" className="account-restart-button" disabled={busyId !== null} onClick={() => { if (!window.confirm(t.restartConfirm)) return; setBusyId(profile.id); setNotice(null); void switchAccountAndRestartCodex(profile.id, true).catch((error) => setNotice(String(error))).finally(() => setBusyId(null)); }}>{t.restart}</button> : null}
             {profile.credentialStatus === "invalid" ? <button type="button" disabled={login?.status === "running"} onClick={() => void handleAdd(profile.id, profile.alias)}>{t.invalid}</button> : null}
             <button type="button" className="account-icon-button account-icon-button--rename" disabled={busyId !== null} aria-label={`${t.rename} ${profile.alias}`} title={t.rename} onClick={() => { const next = window.prompt(t.alias, profile.alias); if (next !== null) void run(profile.id, () => renameAccount(profile.id, next)); }}><PencilSimple /></button>
             <button type="button" className="account-icon-button account-icon-button--delete account-icon-button--danger" disabled={busyId !== null} aria-label={`${t.remove} ${profile.alias}`} title={t.remove} onClick={() => { if (window.confirm(`${t.remove} ${profile.alias}?`)) void run(profile.id, () => deleteAccount(profile.id)); }}><Trash /></button>

@@ -83,6 +83,7 @@ describe("Windows glass material", () => {
     expect(nativeApp).toContain('window.label() == \"account-switcher\" && matches!(event, WindowEvent::Resized(_))');
     expect(frontendBridge).toContain("ACCOUNT_SWITCHER_COMPACT_HEIGHT = 180");
     expect(frontendBridge).toContain("ACCOUNT_SWITCHER_EXPANDED_HEIGHT = 240");
+    expect(frontendBridge).toContain("ACCOUNT_SWITCHER_NOTICE_EXTRA_HEIGHT = 24");
     expect(frontendBridge).toContain("accountSwitcherResizeGeneration");
   });
 
@@ -110,6 +111,7 @@ describe("Windows glass material", () => {
     expect(styles).toContain(".account-switcher__body::-webkit-scrollbar { display: none; width: 0; height: 0; }");
     expect(styles).toContain(".account-switcher__form-shell { min-height: 0; display: grid; grid-template-rows: 0fr;");
     expect(styles).toContain(".account-switcher__form-shell--open { grid-template-rows: 1fr;");
+    expect(styles).not.toContain(".account-restart-button");
     expect(styles).toContain("grid-template-rows: auto minmax(0,1fr) auto auto; gap: 0;");
     expect(styles).toContain(".account-switcher__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 9px;");
     expect(styles).toContain(".account-switcher__form-shell--open { grid-template-rows: 1fr; margin-top: 9px;");

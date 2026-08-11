@@ -86,17 +86,19 @@ export async function setWidgetExpanded(expanded: boolean): Promise<void> {
 
 export const ACCOUNT_SWITCHER_COMPACT_HEIGHT = 180;
 export const ACCOUNT_SWITCHER_EXPANDED_HEIGHT = 240;
+export const ACCOUNT_SWITCHER_NOTICE_EXTRA_HEIGHT = 24;
 const ACCOUNT_SWITCHER_RESIZE_MS = 240;
 let accountSwitcherResizeGeneration = 0;
 
-export async function setAccountSwitcherExpanded(expanded: boolean, reducedMotion = false): Promise<void> {
+export async function setAccountSwitcherExpanded(expanded: boolean, reducedMotion = false, noticeVisible = false): Promise<void> {
   if (!isTauri()) return;
   const generation = ++accountSwitcherResizeGeneration;
   const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
   const appWindow = getCurrentWindow();
   const [physicalSize, scaleFactor] = await Promise.all([appWindow.innerSize(), appWindow.scaleFactor()]);
   const startHeight = physicalSize.height / scaleFactor;
-  const targetHeight = expanded ? ACCOUNT_SWITCHER_EXPANDED_HEIGHT : ACCOUNT_SWITCHER_COMPACT_HEIGHT;
+  const baseHeight = expanded ? ACCOUNT_SWITCHER_EXPANDED_HEIGHT : ACCOUNT_SWITCHER_COMPACT_HEIGHT;
+  const targetHeight = baseHeight + (noticeVisible ? ACCOUNT_SWITCHER_NOTICE_EXTRA_HEIGHT : 0);
 
   if (reducedMotion || Math.abs(startHeight - targetHeight) < 1) {
     await appWindow.setSize(new LogicalSize(320, targetHeight));
