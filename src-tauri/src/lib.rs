@@ -592,7 +592,7 @@ fn open_account_switcher(app: AppHandle, state: State<'_, AppState>) -> Result<a
         .get_webview_window("account-switcher")
         .ok_or_else(|| "account window missing".to_string())?;
     account
-        .set_size(tauri::LogicalSize::new(320.0, 160.0))
+        .set_size(tauri::LogicalSize::new(320.0, 180.0))
         .map_err(|error| format!("failed to reset account window size: {error}"))?;
     let _ = app.emit_to("account-switcher", "account-switcher-opened", ());
     account.show().map_err(|error| format!("failed to show account window: {error}"))?;

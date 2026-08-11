@@ -84,7 +84,7 @@ export async function setWidgetExpanded(expanded: boolean): Promise<void> {
   await getCurrentWindow().setSize(size);
 }
 
-export const ACCOUNT_SWITCHER_COMPACT_HEIGHT = 160;
+export const ACCOUNT_SWITCHER_COMPACT_HEIGHT = 180;
 export const ACCOUNT_SWITCHER_EXPANDED_HEIGHT = 240;
 const ACCOUNT_SWITCHER_RESIZE_MS = 240;
 let accountSwitcherResizeGeneration = 0;
