@@ -14,6 +14,7 @@ use crate::models::{ConversationTokenUsage, TokenUsageSummary};
 #[derive(Clone, Default)]
 struct SessionUsage {
     session_id: String,
+    has_session_meta: bool,
     input_tokens: u64,
     cached_input_tokens: u64,
     output_tokens: u64,
@@ -97,15 +98,19 @@ fn apply_session_line(line: &str, usage: &mut SessionUsage) -> bool {
     let Ok(value) = serde_json::from_str::<Value>(line) else {
         return false;
     };
-    if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+    if !usage.has_session_meta
+        && value.get("type").and_then(Value::as_str) == Some("session_meta")
+    {
         if let Some(session_id) = value.pointer("/payload/id").and_then(Value::as_str) {
             usage.session_id = session_id.to_owned();
+            usage.has_session_meta = true;
         }
     }
     if let Some(total) = value.pointer("/payload/info/total_token_usage") {
         let mut candidate = read_tokens(total);
         if candidate.total_tokens >= usage.total_tokens {
             candidate.session_id = usage.session_id.clone();
+            candidate.has_session_meta = usage.has_session_meta;
             *usage = candidate;
         }
     }
@@ -350,6 +355,18 @@ mod tests {
 
         assert_eq!(usage.session_id, "fallback");
         assert_eq!(usage.total_tokens, 42);
+    }
+
+    #[test]
+    fn keeps_fork_identity_when_parent_history_contains_session_metadata() {
+        let input = r#"{"type":"session_meta","payload":{"id":"subagent-session"}}
+{"type":"event_msg","payload":{"info":{"total_token_usage":{"total_tokens":210}}}}
+{"type":"session_meta","payload":{"id":"parent-session"}}
+{"type":"event_msg","payload":{"info":{"total_token_usage":{"total_tokens":420}}}}"#;
+        let usage = parse_session(Cursor::new(input), "fallback".into());
+
+        assert_eq!(usage.session_id, "subagent-session");
+        assert_eq!(usage.total_tokens, 420);
     }
 
     #[test]
