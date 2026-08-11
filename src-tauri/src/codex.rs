@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::{Path, PathBuf}};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION};
@@ -9,14 +9,20 @@ use crate::models::{ProviderSnapshot, UsageWindow};
 const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CREDITS_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
-const MAX_AUTH_BYTES: u64 = 256 * 1024;
+pub(crate) const MAX_AUTH_BYTES: u64 = 256 * 1024;
 
 struct Auth {
     access_token: String,
     account_id: Option<String>,
 }
 
-fn auth_path() -> Option<PathBuf> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CredentialIdentity {
+    pub account_id: String,
+    pub email: Option<String>,
+}
+
+pub(crate) fn auth_path() -> Option<PathBuf> {
     std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))
@@ -41,15 +47,29 @@ fn account_id_from_jwt(token: &str) -> Option<String> {
     .map(str::to_owned)
 }
 
-fn load_auth() -> Result<Auth, &'static str> {
-    let path = auth_path().ok_or("Codex login was not found.")?;
-    let metadata = fs::metadata(&path).map_err(|_| "Please sign in to Codex Desktop first.")?;
-    if !metadata.is_file() || metadata.len() > MAX_AUTH_BYTES {
+fn jwt_payload(token: &str) -> Option<Value> {
+    let payload = token.split('.').nth(1)?;
+    let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn email_from_jwt(token: &str) -> Option<String> {
+    let payload = jwt_payload(token)?;
+    pick_string(&payload, &["email"]).map(str::to_owned)
+}
+
+pub(crate) fn read_auth_bytes(path: &Path) -> Result<Vec<u8>, &'static str> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_| "Please sign in to Codex Desktop first.")?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > MAX_AUTH_BYTES {
         return Err("Codex login data is unavailable.");
     }
-    let raw = fs::read_to_string(path).map_err(|_| "Please sign in to Codex Desktop first.")?;
+    fs::read(path).map_err(|_| "Please sign in to Codex Desktop first.")
+}
+
+fn parse_auth(raw: &[u8]) -> Result<Auth, &'static str> {
     let value: Value =
-        serde_json::from_str(&raw).map_err(|_| "Codex login format has changed.")?;
+        serde_json::from_slice(raw).map_err(|_| "Codex login format has changed.")?;
     let tokens = value.get("tokens").unwrap_or(&value);
     let access_token = pick_string(tokens, &["access_token", "accessToken"])
         .ok_or("Codex login expired. Please sign in again.")?
@@ -61,6 +81,28 @@ fn load_auth() -> Result<Auth, &'static str> {
         access_token,
         account_id,
     })
+}
+
+pub(crate) fn credential_identity(raw: &[u8]) -> Result<CredentialIdentity, &'static str> {
+    let value: Value =
+        serde_json::from_slice(raw).map_err(|_| "Codex login format has changed.")?;
+    let tokens = value.get("tokens").unwrap_or(&value);
+    let access_token = pick_string(tokens, &["access_token", "accessToken"])
+        .ok_or("Codex login expired. Please sign in again.")?;
+    let account_id = pick_string(tokens, &["account_id", "accountId"])
+        .map(str::to_owned)
+        .or_else(|| account_id_from_jwt(access_token))
+        .ok_or("Codex account identifier is unavailable.")?;
+    let email = pick_string(tokens, &["email"])
+        .map(str::to_owned)
+        .or_else(|| pick_string(tokens, &["id_token", "idToken"]).and_then(email_from_jwt));
+    Ok(CredentialIdentity { account_id, email })
+}
+
+fn load_auth() -> Result<Auth, &'static str> {
+    let path = auth_path().ok_or("Codex login was not found.")?;
+    let raw = read_auth_bytes(&path)?;
+    parse_auth(&raw)
 }
 
 fn headers(auth: &Auth) -> Result<HeaderMap, &'static str> {
@@ -300,6 +342,13 @@ fn safe_http_failure(status: reqwest::StatusCode) -> (&'static str, &'static str
     }
 }
 
+fn network_failure() -> ProviderSnapshot {
+    ProviderSnapshot::failure(
+        "unavailable",
+        "Network unavailable. It will retry automatically.",
+    )
+}
+
 async fn limited_json(mut response: reqwest::Response) -> Result<Value, ()> {
     if response
         .content_length()
@@ -338,12 +387,7 @@ pub async fn fetch_snapshot(client: &reqwest::Client) -> ProviderSnapshot {
             let (status, message) = safe_http_failure(response.status());
             return ProviderSnapshot::failure(status, message);
         }
-        Err(_) => {
-            return ProviderSnapshot::failure(
-                "unavailable",
-                "Network unavailable. It will retry automatically.",
-            )
-        }
+        Err(_) => return network_failure(),
     };
     let usage: Value = match limited_json(usage_response).await {
         Ok(value) => value,
@@ -454,6 +498,15 @@ pub async fn fetch_snapshot(client: &reqwest::Client) -> ProviderSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reports_network_failures_as_retryable_offline_state() {
+        let snapshot = network_failure();
+        assert_eq!(snapshot.status, "unavailable");
+        assert_eq!(snapshot.message.as_deref(), Some("Network unavailable. It will retry automatically."));
+        assert!(snapshot.short_window.is_none());
+        assert!(snapshot.weekly_window.is_none());
+    }
 
     #[test]
     fn parses_both_window_shapes() {

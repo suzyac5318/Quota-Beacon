@@ -24,6 +24,8 @@ interface Props {
   initialShowCreditTip?: boolean;
   palettePreviewActive?: boolean;
   onPalettePreview?: () => void;
+  accountAlias?: string | null;
+  onAccount?: () => void;
   tokenUsage?: TokenUsageSummary | null;
   tokenUsageStatus?: TokenUsageStatus;
   conversationTokenUsage?: ConversationTokenUsage;
@@ -69,6 +71,8 @@ export const QuotaCard = memo(function QuotaCard({
   initialShowCreditTip = false,
   palettePreviewActive = false,
   onPalettePreview,
+  accountAlias,
+  onAccount,
   tokenUsage = null,
   tokenUsageStatus = "loading",
   conversationTokenUsage = { conversationId: null, totalTokens: null },
@@ -138,8 +142,18 @@ export const QuotaCard = memo(function QuotaCard({
         <div className="expanded-content">
           {notice ? <p className="operation-notice" role="status">{notice}</p> : null}
           <header className="card-header quota-reveal quota-reveal--0">
-            <div>
-              <p className="eyebrow">{snapshot.displayName} · {snapshot.plan ?? t.accountFallback}</p>
+            <div className="account-heading">
+              <button
+                type="button"
+                className="account-chip"
+                onMouseDown={(event) => event.stopPropagation()}
+                onClick={onAccount}
+                disabled={!onAccount}
+                aria-label={`${accountAlias ?? snapshot.displayName} · ${snapshot.plan ?? t.accountFallback}`}
+              >
+                <span>{accountAlias ?? snapshot.displayName}</span>
+                <small>· {snapshot.plan ?? t.accountFallback} ▾</small>
+              </button>
               {snapshot.status !== "stale" ? <p className="updated">{weeklyOnly ? t.weeklyRemaining : t.shortRemaining}</p> : null}
             </div>
             {!preferences.locked ? (

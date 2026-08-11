@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QuotaCard } from "./components/QuotaCard";
+import { getAccountVault, listenAccountEvents, openAccountSwitcher, type AccountVault } from "./lib/accounts";
 import { closePalettePreview, fetchSnapshots, fetchTokenUsage, getPreferences, listenDesktopEvents, listenPalettePreview, openPalettePreview, setAlwaysOnTop, setWidgetClip, setWidgetExpanded, startDragging, syncWidgetCssScale, updatePreferences } from "./lib/bridge";
 import { clampPercent, getPrimaryQuota } from "./lib/format";
 import { copy, nextLanguage, normalizeLanguage } from "./lib/i18n";
@@ -29,12 +30,14 @@ export default function App() {
   const [tokenUsage, setTokenUsage] = useState<TokenUsageSummary | null>(null);
   const [tokenUsageStatus, setTokenUsageStatus] = useState<TokenUsageStatus>("loading");
   const [conversationTokenUsage, setConversationTokenUsage] = useState<ConversationTokenUsage>({ conversationId: null, totalTokens: null });
+  const [accountVault, setAccountVault] = useState<AccountVault | null>(null);
   const failures = useRef(0);
   const nextAutoRefreshAt = useRef(0);
   const refreshInFlight = useRef<Promise<void> | null>(null);
   const previousPrimary = useRef(new Map<string, number>());
   const consumptionTimers = useRef(new Map<string, number>());
   const paletteActive = useRef(false);
+  const accountActive = useRef(false);
   const paletteOpening = useRef(false);
   const paletteClosing = useRef(false);
   const hoveredRef = useRef(false);
@@ -70,16 +73,16 @@ export default function App() {
   }, []);
 
   const scheduleCollapse = useCallback((withHoverDelay = true) => {
-    if (paletteActive.current) return;
+    if (paletteActive.current || accountActive.current) return;
     if (collapseDelayTimer.current !== null) window.clearTimeout(collapseDelayTimer.current);
     collapseDelayTimer.current = window.setTimeout(() => {
       collapseDelayTimer.current = null;
-      if (hoveredRef.current || paletteActive.current) return;
+      if (hoveredRef.current || paletteActive.current || accountActive.current) return;
       void setWidgetClip(false);
       setCompact(true);
       collapseResizeTimer.current = window.setTimeout(() => {
         collapseResizeTimer.current = null;
-        if (hoveredRef.current || paletteActive.current) return;
+        if (hoveredRef.current || paletteActive.current || accountActive.current) return;
         void setWidgetExpanded(false).catch(() => setOperationError("Widget collapse failed."));
       }, COLLAPSE_MORPH_MS);
     }, withHoverDelay ? COLLAPSE_DELAY_MS : 0);
@@ -139,6 +142,16 @@ export default function App() {
     }
   }, []);
 
+  const refreshAfterAccountSwitch = useCallback(async () => {
+    const previousRequest = refreshInFlight.current;
+    if (previousRequest) {
+      await previousRequest.catch(() => undefined);
+      if (refreshInFlight.current === previousRequest) refreshInFlight.current = null;
+    }
+    nextAutoRefreshAt.current = 0;
+    await refresh("manual");
+  }, [refresh]);
+
   useEffect(() => {
     let cancelled = false;
     const loadPreferences = async () => {
@@ -157,6 +170,7 @@ export default function App() {
       if (!cancelled) setOperationError("Unable to read settings. Defaults are in use.");
     };
     void refresh("manual");
+    void getAccountVault().then(setAccountVault).catch(() => undefined);
     void loadPreferences();
     return () => { cancelled = true; for (const timer of consumptionTimers.current.values()) window.clearTimeout(timer); consumptionTimers.current.clear(); };
   }, [refresh]);
@@ -179,6 +193,25 @@ export default function App() {
     return () => { cancelled = true; cleanup(); };
   }, [scheduleCollapse]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let cleanup = () => {};
+    void listenAccountEvents({
+      onVault: setAccountVault,
+      onSwitched: () => {
+        previousPrimary.current.clear();
+        setSnapshots([]);
+        void refreshAfterAccountSwitch();
+      },
+      onError: setOperationError,
+      onClosed: () => {
+        accountActive.current = false;
+        if (!hoveredRef.current) scheduleCollapse(false);
+      },
+    }).then((unlisten) => { if (cancelled) unlisten(); else cleanup = unlisten; });
+    return () => { cancelled = true; cleanup(); };
+  }, [refreshAfterAccountSwitch, scheduleCollapse]);
+
   useEffect(() => () => clearWidgetMotionTimers(), [clearWidgetMotionTimers]);
 
   useEffect(() => {
@@ -199,7 +232,7 @@ export default function App() {
           });
           return;
         }
-        scheduleCollapse(false);
+        if (!accountActive.current) scheduleCollapse(false);
       },
       onConversationTokenUsage: setConversationTokenUsage,
     }).then((value) => {
@@ -311,6 +344,18 @@ export default function App() {
     });
   }, [clearWidgetMotionTimers, current]);
 
+  const handleAccount = useCallback(() => {
+    accountActive.current = true;
+    clearWidgetMotionTimers();
+    void setWidgetClip(true);
+    setCompact(false);
+    void setWidgetExpanded(true);
+    void openAccountSwitcher().then(setAccountVault).catch(() => {
+      accountActive.current = false;
+      setOperationError("Unable to open account manager.");
+    });
+  }, [clearWidgetMotionTimers]);
+
   if (!displayed) return <div className="loading-card" aria-label={t.loadingQuota}><span /><span /><span /></div>;
 
   return (
@@ -330,6 +375,8 @@ export default function App() {
       notice={operationError}
       palettePreviewActive={palettePercent !== null}
       onPalettePreview={handlePalettePreview}
+      accountAlias={accountVault?.profiles.find((profile) => profile.isActive)?.alias ?? null}
+      onAccount={handleAccount}
       tokenUsage={tokenUsage}
       tokenUsageStatus={tokenUsageStatus}
       conversationTokenUsage={conversationTokenUsage}

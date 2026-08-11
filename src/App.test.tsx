@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { fetchSnapshots } from "./lib/bridge";
 import type { ProviderSnapshot, WidgetPreferences } from "./types";
@@ -28,6 +28,19 @@ const snapshot: ProviderSnapshot = {
   message: null,
 };
 
+const accountHarness = vi.hoisted(() => ({
+  handlers: null as null | { onSwitched?: () => void },
+}));
+
+vi.mock("./lib/accounts", () => ({
+  getAccountVault: vi.fn(async () => ({ profiles: [], activeProfileId: null, hasCurrentLogin: true, currentLoginSaved: false })),
+  listenAccountEvents: vi.fn(async (handlers: { onSwitched?: () => void }) => {
+    accountHarness.handlers = handlers;
+    return () => {};
+  }),
+  openAccountSwitcher: vi.fn(async () => ({ profiles: [], activeProfileId: null, hasCurrentLogin: true, currentLoginSaved: false })),
+}));
+
 vi.mock("./lib/bridge", () => ({
   closePalettePreview: vi.fn(async () => {}),
   fetchSnapshots: vi.fn(),
@@ -53,6 +66,11 @@ vi.mock("./lib/bridge", () => ({
 }));
 
 describe("quota refresh coordination", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    accountHarness.handlers = null;
+  });
+
   it("coalesces focus refreshes and does not refresh quota on hover", async () => {
     let resolveSnapshots!: (value: ProviderSnapshot[]) => void;
     const pending = new Promise<ProviderSnapshot[]>((resolve) => {
@@ -72,6 +90,26 @@ describe("quota refresh coordination", () => {
     expect(card).not.toBeNull();
     fireEvent.mouseEnter(card!);
     expect(fetchSnapshots).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("clears the previous account quota and refreshes after an account switch", async () => {
+    let resolveNext!: (value: ProviderSnapshot[]) => void;
+    const nextSnapshot = { ...snapshot, shortWindow: { ...snapshot.shortWindow!, remainingPercent: 63 } };
+    vi.mocked(fetchSnapshots)
+      .mockResolvedValueOnce([snapshot])
+      .mockReturnValueOnce(new Promise<ProviderSnapshot[]>((resolve) => { resolveNext = resolve; }));
+
+    const view = render(<App />);
+    await waitFor(() => expect(view.getAllByText("74")).toHaveLength(2));
+    await waitFor(() => expect(accountHarness.handlers).not.toBeNull());
+
+    act(() => accountHarness.handlers?.onSwitched?.());
+    await waitFor(() => expect(view.container.querySelector(".loading-card")).not.toBeNull());
+    expect(fetchSnapshots).toHaveBeenCalledTimes(2);
+
+    await act(async () => resolveNext([nextSnapshot]));
+    await waitFor(() => expect(view.getAllByText("63")).toHaveLength(2));
     view.unmount();
   });
 });

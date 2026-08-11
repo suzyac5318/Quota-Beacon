@@ -19,7 +19,7 @@ type TransparentWindowConfig = {
 describe("Windows glass material", () => {
   it("keeps every native material window fully transparent", () => {
     const windows = tauriConfig.app.windows as TransparentWindowConfig[];
-    expect(windows.map((window) => window.label)).toEqual(["widget", "palette", "palette-editor"]);
+    expect(windows.map((window) => window.label)).toEqual(["widget", "palette", "palette-editor", "account-switcher"]);
     expect(windows.every((window) => window.transparent && window.backgroundColor === "#00000000")).toBe(true);
   });
 
@@ -49,6 +49,7 @@ describe("Windows glass material", () => {
     expect(nativeMaterial).toContain("BLUR_WINDOWS");
     expect(nativeMaterial).toContain('(\"palette\", BlurWindowKind::Control)');
     expect(nativeMaterial).toContain('(\"palette-editor\", BlurWindowKind::Control)');
+    expect(nativeMaterial).toContain('(\"account-switcher\", BlurWindowKind::Control)');
     expect(nativeMaterial).toContain("EXPAND_MORPH_MS: u64 = 400");
     expect(nativeMaterial).toContain("COLLAPSE_MORPH_DELAY_MS: u64 = 90");
     expect(nativeMaterial).toContain("COLLAPSE_MORPH_MS: u64 = 190");
@@ -72,7 +73,7 @@ describe("Windows glass material", () => {
     expect(frontendBridge).not.toContain("getCurrentWindow().outerSize()");
     expect(frontendBridge).toContain("physicalSize.width / cssViewportWidth");
     expect(nativeApp).toContain('position_palette_windows(&app)?;\n    window_material::sync_window_material(&app);');
-    expect(nativeApp).toContain('[\"widget\", \"palette\", \"palette-editor\"].contains(&window.label())');
+    expect(nativeApp).toContain('[\"widget\", \"palette\", \"palette-editor\", \"account-switcher\"].contains(&window.label())');
   });
 
   it("keeps the more transparent glass colors and accessibility fallbacks", () => {
@@ -92,7 +93,7 @@ describe("Windows glass material", () => {
     expect(styles).not.toContain("0 8px 24px rgba(37,45,60,.1)");
   });
 
-  it("draws one internal stroke for all three glass cards", () => {
+  it("draws one internal stroke for every glass card", () => {
     expect(styles).toContain("--glass-stroke-width: .5px");
     expect(styles.match(/box-shadow: inset 0 0 0 var\(--glass-stroke-width\) var\(--glass-border\)/g)?.length).toBeGreaterThanOrEqual(5);
     expect(styles).not.toContain("inset 0 0 0 1px var(--glass-border)");

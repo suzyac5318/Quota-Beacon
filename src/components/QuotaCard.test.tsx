@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshot, WidgetPreferences } from "../types";
 import { QuotaCard } from "./QuotaCard";
@@ -54,5 +54,29 @@ describe("QuotaCard content layers", () => {
     expect(view.container.querySelector(".collapsed-content")).toBe(collapsed);
     expect(view.container.querySelector(".expanded-content")).toBe(expanded);
     expect(view.container.querySelector(".quota-card--compact")).toBeNull();
+  });
+
+  it("uses a semantic account chip without starting a window drag", () => {
+    const onAccount = vi.fn();
+    const onDrag = vi.fn();
+    const view = render(<QuotaCard
+      snapshot={snapshot}
+      preferences={preferences}
+      providerCount={1}
+      onPrevious={vi.fn()}
+      onNext={vi.fn()}
+      onTogglePin={vi.fn()}
+      onLock={vi.fn()}
+      onLanguage={vi.fn()}
+      onDrag={onDrag}
+      onHover={vi.fn()}
+      accountAlias="个人号"
+      onAccount={onAccount}
+    />);
+    const button = view.getByRole("button", { name: "个人号 · PLUS" });
+    fireEvent.mouseDown(button, { button: 0 });
+    fireEvent.click(button);
+    expect(onAccount).toHaveBeenCalledTimes(1);
+    expect(onDrag).not.toHaveBeenCalled();
   });
 });

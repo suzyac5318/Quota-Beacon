@@ -722,6 +722,7 @@ pub fn apply_window_materials(app: &AppHandle) {
         ("widget", BlurWindowKind::Widget),
         ("palette", BlurWindowKind::Control),
         ("palette-editor", BlurWindowKind::Control),
+        ("account-switcher", BlurWindowKind::Control),
     ] {
         if slot.iter().any(|window| window.label == label) {
             continue;
