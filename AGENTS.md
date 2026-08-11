@@ -75,8 +75,8 @@ Quota Beacon 是基于 React、TypeScript、Vite、Tauri 2 和 Rust 的 Windows/
 - 优先最小必要改动，不做无关重构，不批量格式化上游未格式化文件。
 - 从 `1.0.0` 起，每次完成一项开发后都必须创建一个版本化提交：同步更新根目录 `VERSION`、`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` 和 `CHANGELOG.md`。
 - 默认按语义化版本递增：修复用 patch，新功能用 minor，破坏性变更用 major；提交信息使用 `v<版本号>: <简短开发内容>`，并创建同名带注释 Git 标签。
-- 当前 `upstream` 仅用于读取上游历史，严禁推送；用户自己的 GitHub 仓库配置为 `origin` 后，每个版本提交与标签都推送到 `origin`。
-- 不自动创建 PR 或覆盖 Git 历史。
+- 当前 `upstream` 仅用于读取上游历史，严禁推送；`origin` 也不得默认推送。只有用户在当前任务中明确授权“推送到 GitHub”后，才能推送对应提交与标签。
+- 用户授权修改、构建、安装、本地提交或创建本地标签，均不代表授权 GitHub 写入。未经明确允许，不执行 `git push`，不创建 PR、Release 或其他远端内容，也不覆盖 Git 历史。
 - 替换本机运行程序前先备份上一版可执行文件。
 - 临时截图、浏览器记录和构建缓存不得加入 Git。
 - 不提交 Codex 登录信息、access token、`.codex`、`.env*`、个人截图或原始额度响应。
