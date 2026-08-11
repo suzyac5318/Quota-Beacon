@@ -247,7 +247,8 @@ button { font: inherit; }
 .account-switcher__header p { margin-top: 2px; color: rgba(23,25,31,.58); font-size: 8px; line-height: 1.35; }
 .account-switcher__header button, .account-icon-button { width: 25px; height: 25px; flex: none; display: grid; place-items: center; padding: 0; border: 1px solid rgba(23,25,31,.1); border-radius: 50%; color: #17191f; background: rgba(255,255,255,.58); cursor: pointer; }
 .account-switcher__header svg, .account-icon-button svg { width: 13px; height: 13px; }
-.account-switcher__body { min-height: 0; display: grid; align-content: start; gap: 6px; overflow-y: auto; scrollbar-width: thin; }
+.account-switcher__body { min-height: 0; display: grid; align-content: start; gap: 6px; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
+.account-switcher__body::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .account-empty { padding: 12px; border-radius: 12px; color: rgba(23,25,31,.65); background: rgba(255,255,255,.34); font-size: 10px; line-height: 1.5; }
 .account-row { min-height: 43px; display: grid; grid-template-columns: 16px minmax(0,1fr) auto auto auto auto auto; align-items: center; gap: 4px; padding: 6px 7px; border: 1px solid rgba(23,25,31,.08); border-radius: 12px; background: rgba(255,255,255,.4); }
 .account-row .account-restart-button { max-width: 48px; height: auto; min-height: 23px; padding: 3px 6px; line-height: 1.1; white-space: normal; }
@@ -261,6 +262,8 @@ button { font: inherit; }
 .account-row__label { color: rgba(36,91,65,.78); font-size: 8px; font-weight: 700; white-space: nowrap; }
 .account-row > button:not(.account-icon-button) { height: 23px; padding: 0 8px; border: 0; border-radius: 999px; color: white; background: #315f9f; cursor: pointer; font-size: 9px; font-weight: 680; }
 .account-icon-button { width: 22px; height: 22px; }
+.account-icon-button--rename { grid-column: 6; }
+.account-icon-button--delete { grid-column: 7; }
 .account-icon-button--danger { color: #8a3640; }
 .account-row button:hover, .account-switcher__header button:hover { background-color: rgba(255,255,255,.84); }
 .account-row > button:not(.account-icon-button):hover { background: #244f8b; }

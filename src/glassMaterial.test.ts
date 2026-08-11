@@ -93,6 +93,13 @@ describe("Windows glass material", () => {
     expect(styles).not.toContain("0 8px 24px rgba(37,45,60,.1)");
   });
 
+  it("keeps account actions aligned while hiding only the scrollbar chrome", () => {
+    expect(styles).toContain(".account-icon-button--rename { grid-column: 6; }");
+    expect(styles).toContain(".account-icon-button--delete { grid-column: 7; }");
+    expect(styles).toContain("overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none;");
+    expect(styles).toContain(".account-switcher__body::-webkit-scrollbar { display: none; width: 0; height: 0; }");
+  });
+
   it("draws one internal stroke for every glass card", () => {
     expect(styles).toContain("--glass-stroke-width: .5px");
     expect(styles.match(/box-shadow: inset 0 0 0 var\(--glass-stroke-width\) var\(--glass-border\)/g)?.length).toBeGreaterThanOrEqual(5);
