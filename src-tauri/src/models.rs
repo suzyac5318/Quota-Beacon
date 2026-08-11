@@ -42,6 +42,15 @@ pub struct ConversationTokenUsage {
     pub total_tokens: Option<u64>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountWeeklyQuota {
+    pub profile_id: String,
+    pub remaining_percent: Option<f64>,
+    pub status: String,
+    pub message: Option<String>,
+}
+
 impl ProviderSnapshot {
     pub fn failure(status: &str, message: &str) -> Self {
         Self {

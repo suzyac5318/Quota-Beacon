@@ -362,6 +362,24 @@ impl AccountVault {
         })
     }
 
+    pub fn read_profile_credentials(&self, profile_id: &str) -> Result<Vec<u8>, String> {
+        self.ensure_ready()?;
+        let profile = self
+            .state
+            .profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .ok_or_else(|| "Account was not found.".to_string())?;
+        let encrypted =
+            read_regular_file(&self.credential_path(profile_id), codex::MAX_AUTH_BYTES * 2)?;
+        let raw = unprotect(&encrypted)?;
+        let identity = codex::credential_identity(&raw).map_err(str::to_string)?;
+        if fingerprint(&identity) != profile.account_fingerprint {
+            return Err("Saved account credentials do not match their metadata.".into());
+        }
+        Ok(raw)
+    }
+
     fn sync_current_credentials(&mut self) -> Result<(), String> {
         let raw = codex::read_auth_bytes(&self.auth_path).map_err(str::to_string)?;
         if let Some(profile_id) = self.active_profile_for_raw(&raw) {

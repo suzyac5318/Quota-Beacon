@@ -6,6 +6,7 @@ mod token_usage;
 mod window_material;
 
 use std::{
+    collections::HashMap,
     fs,
     io::Write,
     path::PathBuf,
@@ -17,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use models::{ProviderSnapshot, TokenUsageSummary, WidgetPreferences};
+use models::{AccountWeeklyQuota, ProviderSnapshot, TokenUsageSummary, WidgetPreferences};
 use serde::Serialize;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, Submenu},
@@ -33,6 +34,7 @@ struct AppState {
     preferences_path: PathBuf,
     fetch_lock: tokio::sync::Mutex<()>,
     snapshot_cache: Mutex<Option<(Instant, Vec<ProviderSnapshot>)>>,
+    account_quota_cache: Mutex<HashMap<String, (Instant, AccountWeeklyQuota)>>,
     account_generation: AtomicU64,
     token_usage_cache: Arc<Mutex<token_usage::TokenUsageCache>>,
     palette_generation: AtomicU64,
@@ -40,6 +42,12 @@ struct AppState {
     account_switch_lock: tokio::sync::Mutex<()>,
     account_login_task: Mutex<Option<AccountLoginTask>>,
     account_login_root: PathBuf,
+}
+
+const INACTIVE_ACCOUNT_QUOTA_TTL: Duration = Duration::from_secs(5 * 60);
+
+fn inactive_account_quota_is_fresh(updated_at: Instant) -> bool {
+    updated_at.elapsed() < INACTIVE_ACCOUNT_QUOTA_TTL
 }
 
 struct AccountLoginTask {
@@ -230,6 +238,104 @@ fn get_account_vault(state: State<'_, AppState>) -> Result<account_vault::Accoun
         .lock()
         .map_err(|_| "Account storage is busy.".to_string())?
         .view()
+}
+
+fn weekly_quota_from_snapshot(profile_id: String, snapshot: ProviderSnapshot) -> AccountWeeklyQuota {
+    let remaining_percent = snapshot
+        .weekly_window
+        .as_ref()
+        .map(|window| window.remaining_percent);
+    let status = if snapshot.status == "ok" && remaining_percent.is_none() {
+        "unavailable".to_string()
+    } else {
+        snapshot.status
+    };
+    let message = if status == "unavailable" && snapshot.message.is_none() {
+        Some("Weekly quota is unavailable.".to_string())
+    } else {
+        snapshot.message
+    };
+    AccountWeeklyQuota {
+        profile_id,
+        remaining_percent,
+        status,
+        message,
+    }
+}
+
+#[tauri::command]
+async fn get_account_weekly_quotas(
+    state: State<'_, AppState>,
+) -> Result<Vec<AccountWeeklyQuota>, String> {
+    let vault_view = state
+        .account_vault
+        .lock()
+        .map_err(|_| "Account storage is busy.".to_string())?
+        .view()?;
+    let profile_ids = vault_view
+        .profiles
+        .iter()
+        .map(|profile| profile.id.clone())
+        .collect::<Vec<_>>();
+    if let Ok(mut cache) = state.account_quota_cache.lock() {
+        cache.retain(|profile_id, _| profile_ids.contains(profile_id));
+    }
+
+    let mut quotas = Vec::with_capacity(profile_ids.len());
+    for profile_id in profile_ids {
+        if vault_view.active_profile_id.as_deref() == Some(profile_id.as_str()) {
+            let snapshot = state
+                .snapshot_cache
+                .lock()
+                .ok()
+                .and_then(|cache| cache.as_ref().and_then(|(_, values)| values.first().cloned()));
+            quotas.push(match snapshot {
+                Some(snapshot) => weekly_quota_from_snapshot(profile_id, snapshot),
+                None => AccountWeeklyQuota {
+                    profile_id,
+                    remaining_percent: None,
+                    status: "loading".into(),
+                    message: None,
+                },
+            });
+            continue;
+        }
+
+        let cached = state
+            .account_quota_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&profile_id).cloned())
+            .filter(|(updated_at, _)| inactive_account_quota_is_fresh(*updated_at))
+            .map(|(_, quota)| quota);
+        if let Some(cached) = cached {
+            quotas.push(cached);
+            continue;
+        }
+
+        let credentials = state
+            .account_vault
+            .lock()
+            .map_err(|_| "Account storage is busy.".to_string())?
+            .read_profile_credentials(&profile_id);
+        let quota = match credentials {
+            Ok(raw) => weekly_quota_from_snapshot(
+                profile_id.clone(),
+                codex::fetch_snapshot_from_bytes(&state.client, &raw).await,
+            ),
+            Err(message) => AccountWeeklyQuota {
+                profile_id: profile_id.clone(),
+                remaining_percent: None,
+                status: "signed_out".into(),
+                message: Some(message),
+            },
+        };
+        if let Ok(mut cache) = state.account_quota_cache.lock() {
+            cache.insert(profile_id, (Instant::now(), quota.clone()));
+        }
+        quotas.push(quota);
+    }
+    Ok(quotas)
 }
 
 #[tauri::command]
@@ -1004,6 +1110,7 @@ pub fn run() {
                 preferences_path,
                 fetch_lock: tokio::sync::Mutex::new(()),
                 snapshot_cache: Mutex::new(None),
+                account_quota_cache: Mutex::new(HashMap::new()),
                 account_generation: AtomicU64::new(0),
                 token_usage_cache: Arc::clone(&token_usage_cache),
                 palette_generation: AtomicU64::new(0),
@@ -1053,6 +1160,7 @@ pub fn run() {
             save_palette_colors,
             close_palette_preview,
             get_account_vault,
+            get_account_weekly_quotas,
             save_current_account,
             rename_account,
             delete_account,
@@ -1150,4 +1258,19 @@ pub fn run() {
             window_material::destroy_window_materials();
         }
     });
+}
+
+#[cfg(test)]
+mod account_quota_tests {
+    use super::*;
+
+    #[test]
+    fn inactive_account_quota_cache_expires_at_five_minutes() {
+        assert!(inactive_account_quota_is_fresh(
+            Instant::now() - Duration::from_secs(299)
+        ));
+        assert!(!inactive_account_quota_is_fresh(
+            Instant::now() - Duration::from_secs(300)
+        ));
+    }
 }

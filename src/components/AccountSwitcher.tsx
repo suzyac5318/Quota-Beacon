@@ -6,12 +6,14 @@ import {
   cancelAccountLogin,
   deleteAccount,
   getAccountVault,
+  getAccountWeeklyQuotas,
   listenAccountEvents,
   pollAccountLogin,
   renameAccount,
   saveCurrentAccount,
   switchAccount,
   type AccountLoginStatus,
+  type AccountWeeklyQuota,
   type AccountVault,
 } from "../lib/accounts";
 import { getPreferences, setAccountSwitcherExpanded } from "../lib/bridge";
@@ -26,6 +28,7 @@ export function AccountSwitcher() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [addFormOpen, setAddFormOpen] = useState(false);
+  const [weeklyQuotas, setWeeklyQuotas] = useState<Map<string, AccountWeeklyQuota>>(() => new Map());
   const aliasInputRef = useRef<HTMLInputElement>(null);
   const t = useMemo(() => accountCopy(language), [language]);
 
@@ -41,6 +44,26 @@ export function AccountSwitcher() {
     }).then((value) => { cleanup = value; });
     return () => cleanup();
   }, [t.switched]);
+
+  useEffect(() => {
+    let disposed = false;
+    let inFlight = false;
+    const refreshWeeklyQuotas = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const values = await getAccountWeeklyQuotas();
+        if (!disposed) setWeeklyQuotas(new Map(values.map((value) => [value.profileId, value])));
+      } catch {
+        // Preserve the last successful values; account operations remain independently usable.
+      } finally {
+        inFlight = false;
+      }
+    };
+    void refreshWeeklyQuotas();
+    const timer = window.setInterval(() => void refreshWeeklyQuotas(), 10_000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, []);
 
   useEffect(() => {
     if (!login || login.status !== "running") return;
@@ -107,17 +130,25 @@ export function AccountSwitcher() {
       <section className="account-switcher__body" aria-live="polite">
         {!vault ? <p className="account-empty">…</p> : null}
         {vault && !vault.currentLoginSaved ? <p className="account-empty">{t.empty}</p> : null}
-        {vault?.profiles.map((profile) => (
+        {vault?.profiles.map((profile) => {
+          const quota = weeklyQuotas.get(profile.id);
+          const needsLogin = profile.credentialStatus === "invalid" || quota?.status === "signed_out";
+          return (
           <article className={`account-row${profile.isActive ? " account-row--active" : ""}`} key={profile.id}>
             <span className="account-row__status" aria-hidden="true">{profile.isActive ? <Check /> : null}</span>
-            <div><strong>{profile.alias}</strong><small>{profile.maskedEmail ?? "—"}</small></div>
-            <span className="account-row__label">{profile.isActive ? t.current : profile.credentialStatus === "invalid" ? t.invalid : ""}</span>
-            {!profile.isActive && profile.credentialStatus === "ready" ? <button type="button" disabled={busyId !== null} onClick={() => { setBusyId(profile.id); setNotice(null); void switchAccount(profile.id).then(() => getAccountVault()).then(setVault).catch((error) => setNotice(String(error))).finally(() => setBusyId(null)); }}>{t.switch}</button> : null}
-            {profile.credentialStatus === "invalid" ? <button type="button" disabled={login?.status === "running"} onClick={() => void handleAdd(profile.id, profile.alias)}>{t.invalid}</button> : null}
+            <div className="account-row__identity"><strong>{profile.alias}</strong><small>{profile.maskedEmail ?? "—"}</small><span className="account-row__quota" title={quota?.message ?? undefined}>{(() => {
+              if (needsLogin) return t.quotaExpired;
+              if (quota?.remainingPercent != null) return `${t.weekly} ${Math.round(quota.remainingPercent)}%`;
+              return t.quotaUnavailable;
+            })()}</span></div>
+            <span className="account-row__label">{profile.isActive ? t.current : ""}</span>
+            {!profile.isActive && !needsLogin ? <button type="button" disabled={busyId !== null} onClick={() => { setBusyId(profile.id); setNotice(null); void switchAccount(profile.id).then(() => getAccountVault()).then(setVault).catch((error) => setNotice(String(error))).finally(() => setBusyId(null)); }}>{t.switch}</button> : null}
+            {needsLogin ? <button type="button" disabled={login?.status === "running"} onClick={() => void handleAdd(profile.id, profile.alias)}>{t.invalid}</button> : null}
             <button type="button" className="account-icon-button account-icon-button--rename" disabled={busyId !== null} aria-label={`${t.rename} ${profile.alias}`} title={t.rename} onClick={() => { const next = window.prompt(t.alias, profile.alias); if (next !== null) void run(profile.id, () => renameAccount(profile.id, next)); }}><PencilSimple /></button>
             <button type="button" className="account-icon-button account-icon-button--delete account-icon-button--danger" disabled={busyId !== null} aria-label={`${t.remove} ${profile.alias}`} title={t.remove} onClick={() => { if (window.confirm(`${t.remove} ${profile.alias}?`)) void run(profile.id, () => deleteAccount(profile.id)); }}><Trash /></button>
           </article>
-        ))}
+          );
+        })}
       </section>
 
       <div className={`account-switcher__form-shell${addFormVisible ? " account-switcher__form-shell--open" : ""}`} aria-hidden={!addFormVisible} inert={!addFormVisible}>

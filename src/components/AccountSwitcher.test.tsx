@@ -7,6 +7,7 @@ import { AccountSwitcher } from "./AccountSwitcher";
 const mocks = vi.hoisted(() => ({
   saveCurrentAccount: vi.fn(),
   getAccountVault: vi.fn(),
+  getAccountWeeklyQuotas: vi.fn(),
   setAccountSwitcherExpanded: vi.fn(async () => undefined),
   accountHandlers: null as null | { onOpened?: () => void; onSwitched?: () => void },
 }));
@@ -17,9 +18,11 @@ vi.mock("../lib/accounts", () => ({
     add: "添加账号", cancel: "取消登录", current: "当前使用", switch: "切换", rename: "重命名", remove: "删除",
     empty: "请先显式保存当前 Codex 登录，再添加其他账号。", browser: "请在浏览器中完成官方 Codex 登录。",
     switched: "凭据已切换；重启 Codex 后完整生效。", invalid: "重新登录", restart: "切换并重启", restartConfirm: "重启确认", localTokens: "Token 统计继续显示本机全部 Codex 会话累计。",
+    weekly: "周", quotaUnavailable: "周 --", quotaExpired: "重新登录",
   }),
   beginAccountLogin: vi.fn(), cancelAccountLogin: vi.fn(), closeAccountSwitcher: vi.fn(), deleteAccount: vi.fn(),
   getAccountVault: mocks.getAccountVault,
+  getAccountWeeklyQuotas: mocks.getAccountWeeklyQuotas,
   listenAccountEvents: vi.fn(async (handlers: { onOpened?: () => void; onSwitched?: () => void }) => { mocks.accountHandlers = handlers; return () => {}; }), pollAccountLogin: vi.fn(), renameAccount: vi.fn(),
   saveCurrentAccount: mocks.saveCurrentAccount.mockResolvedValue({
     profiles: [{ id: "personal", alias: "个人号", maskedEmail: "p***@example.com", isActive: true, credentialStatus: "ready" }],
@@ -39,6 +42,7 @@ describe("AccountSwitcher", () => {
     mocks.accountHandlers = null;
     mocks.saveCurrentAccount.mockClear();
     mocks.getAccountVault.mockReset().mockResolvedValue({ profiles: [], activeProfileId: null, hasCurrentLogin: true, currentLoginSaved: false });
+    mocks.getAccountWeeklyQuotas.mockReset().mockResolvedValue([]);
     mocks.setAccountSwitcherExpanded.mockClear();
   });
 
@@ -100,5 +104,26 @@ describe("AccountSwitcher", () => {
 
     await waitFor(() => expect(view.getByRole("status").textContent).toContain("重启 Codex 后完整生效"));
     await waitFor(() => expect(mocks.setAccountSwitcherExpanded).toHaveBeenLastCalledWith(false, false, true));
+  });
+
+  it("shows only the rounded weekly quota for each saved account", async () => {
+    mocks.getAccountVault.mockResolvedValue({
+      profiles: [
+        { id: "personal", alias: "个人号", maskedEmail: "p***@example.com", isActive: true, credentialStatus: "ready" },
+        { id: "work", alias: "工作号", maskedEmail: "w***@example.com", isActive: false, credentialStatus: "ready" },
+      ],
+      activeProfileId: "personal", hasCurrentLogin: true, currentLoginSaved: true,
+    });
+    mocks.getAccountWeeklyQuotas.mockResolvedValue([
+      { profileId: "personal", remainingPercent: 64.6, status: "ok", message: null },
+      { profileId: "work", remainingPercent: 31.2, status: "ok", message: null },
+    ]);
+
+    const view = render(<AccountSwitcher />);
+
+    await waitFor(() => expect(view.getByText("周 65%")).not.toBeNull());
+    expect(view.getByText("周 31%")).not.toBeNull();
+    expect(view.queryByText(/5\s*小时/)).toBeNull();
+    expect(view.queryByText(/分钟前|已过期/)).toBeNull();
   });
 });
