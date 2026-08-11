@@ -6,6 +6,7 @@ import { AccountSwitcher } from "./AccountSwitcher";
 
 const mocks = vi.hoisted(() => ({
   saveCurrentAccount: vi.fn(),
+  setAccountSwitcherExpanded: vi.fn(async () => undefined),
   accountHandlers: null as null | { onOpened?: () => void },
 }));
 
@@ -28,6 +29,7 @@ vi.mock("../lib/accounts", () => ({
 
 vi.mock("../lib/bridge", () => ({
   getPreferences: vi.fn(async () => ({ language: "zh-CN" })),
+  setAccountSwitcherExpanded: mocks.setAccountSwitcherExpanded,
 }));
 
 describe("AccountSwitcher", () => {
@@ -35,23 +37,32 @@ describe("AccountSwitcher", () => {
     cleanup();
     mocks.accountHandlers = null;
     mocks.saveCurrentAccount.mockClear();
+    mocks.setAccountSwitcherExpanded.mockClear();
   });
 
   it("requires an explicit user action before saving the current login", async () => {
     const view = render(<AccountSwitcher />);
     await waitFor(() => expect(view.getByText("请先显式保存当前 Codex 登录，再添加其他账号。")).not.toBeNull());
     expect(mocks.saveCurrentAccount).not.toHaveBeenCalled();
-    expect(view.queryByLabelText("账号名称")).toBeNull();
+    const formShell = view.container.querySelector(".account-switcher__form-shell");
+    const aliasInput = view.getByLabelText("账号名称") as HTMLInputElement;
+    expect(formShell?.getAttribute("aria-hidden")).toBe("true");
+    expect(aliasInput.disabled).toBe(true);
     const addButton = view.getByRole("button", { name: "添加账号" });
     expect(addButton.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(addButton);
     expect(addButton.getAttribute("aria-expanded")).toBe("true");
-    fireEvent.change(view.getByLabelText("账号名称"), { target: { value: "未提交" } });
+    expect(formShell?.getAttribute("aria-hidden")).toBe("false");
+    expect(aliasInput.disabled).toBe(false);
+    expect(document.activeElement).toBe(aliasInput);
+    fireEvent.change(aliasInput, { target: { value: "未提交" } });
     fireEvent.click(addButton);
     expect(addButton.getAttribute("aria-expanded")).toBe("false");
-    expect(view.queryByLabelText("账号名称")).toBeNull();
+    expect(formShell?.getAttribute("aria-hidden")).toBe("true");
+    expect(aliasInput.disabled).toBe(true);
+    expect(aliasInput.value).toBe("");
     fireEvent.click(addButton);
-    fireEvent.change(view.getByLabelText("账号名称"), { target: { value: "个人号" } });
+    fireEvent.change(aliasInput, { target: { value: "个人号" } });
     fireEvent.click(view.getByRole("button", { name: "保存当前账号" }));
     await waitFor(() => expect(mocks.saveCurrentAccount).toHaveBeenCalledWith("个人号"));
     expect(view.getByText("p***@example.com")).not.toBeNull();
@@ -62,9 +73,12 @@ describe("AccountSwitcher", () => {
     await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());
     const addButton = view.getByRole("button", { name: "添加账号" });
     fireEvent.click(addButton);
-    fireEvent.change(view.getByLabelText("账号名称"), { target: { value: "未提交" } });
+    const aliasInput = view.getByLabelText("账号名称") as HTMLInputElement;
+    fireEvent.change(aliasInput, { target: { value: "未提交" } });
     act(() => mocks.accountHandlers?.onOpened?.());
     expect(addButton.getAttribute("aria-expanded")).toBe("false");
-    expect(view.queryByLabelText("账号名称")).toBeNull();
+    expect(view.container.querySelector(".account-switcher__form-shell")?.getAttribute("aria-hidden")).toBe("true");
+    expect(aliasInput.disabled).toBe(true);
+    expect(aliasInput.value).toBe("");
   });
 });

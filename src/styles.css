@@ -268,7 +268,9 @@ button { font: inherit; }
 .account-row button:hover, .account-switcher__header button:hover { background-color: rgba(255,255,255,.84); }
 .account-row > button:not(.account-icon-button):hover { background: #244f8b; }
 .account-row button:disabled { opacity: .45; cursor: default; }
-.account-switcher__footer { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 7px; }
+.account-switcher__form-shell { min-height: 0; display: grid; grid-template-rows: 0fr; opacity: 0; pointer-events: none; transform: translateY(-5px); transition: grid-template-rows 220ms 35ms cubic-bezier(.2,.78,.2,1), opacity 130ms 55ms ease-out, transform 180ms 55ms ease-out; will-change: grid-template-rows, opacity, transform; }
+.account-switcher__form-shell--open { grid-template-rows: 1fr; opacity: 1; pointer-events: auto; transform: translateY(0); }
+.account-switcher__footer { min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 7px; overflow: hidden; }
 .account-switcher__footer label { display: grid; gap: 3px; color: rgba(23,25,31,.62); font-size: 8px; font-weight: 650; }
 .account-switcher__footer input { width: 100%; height: 29px; padding: 0 10px; border: 1px solid rgba(23,25,31,.12); border-radius: 10px; color: #17191f; background: rgba(255,255,255,.68); outline: none; }
 .account-switcher__footer input:focus { border-color: rgba(49,95,159,.52); box-shadow: 0 0 0 2px rgba(49,95,159,.12); }
@@ -319,7 +321,7 @@ button { font: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   .aurora, .loading-card span, .usage-indicator--active i { animation: none; }
-  .provider-mark img, .palette-range::-webkit-slider-thumb, .palette-editor__actions button, .account-chip, .account-switcher button, .quota-card, .collapsed-content, .quota-reveal, .expanded-primary, .palette-preview, .palette-editor, .palette-swatch { transition: none; animation: none; }
+  .provider-mark img, .palette-range::-webkit-slider-thumb, .palette-editor__actions button, .account-chip, .account-switcher button, .account-switcher__form-shell, .quota-card, .collapsed-content, .quota-reveal, .expanded-primary, .palette-preview, .palette-editor, .palette-swatch { transition: none; animation: none; }
   .progress span { transition: none; }
 }
 @media (prefers-reduced-transparency: reduce) {

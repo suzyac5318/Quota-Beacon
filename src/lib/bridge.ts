@@ -84,6 +84,36 @@ export async function setWidgetExpanded(expanded: boolean): Promise<void> {
   await getCurrentWindow().setSize(size);
 }
 
+export const ACCOUNT_SWITCHER_COMPACT_HEIGHT = 180;
+export const ACCOUNT_SWITCHER_EXPANDED_HEIGHT = 240;
+const ACCOUNT_SWITCHER_RESIZE_MS = 240;
+let accountSwitcherResizeGeneration = 0;
+
+export async function setAccountSwitcherExpanded(expanded: boolean, reducedMotion = false): Promise<void> {
+  if (!isTauri()) return;
+  const generation = ++accountSwitcherResizeGeneration;
+  const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
+  const appWindow = getCurrentWindow();
+  const [physicalSize, scaleFactor] = await Promise.all([appWindow.innerSize(), appWindow.scaleFactor()]);
+  const startHeight = physicalSize.height / scaleFactor;
+  const targetHeight = expanded ? ACCOUNT_SWITCHER_EXPANDED_HEIGHT : ACCOUNT_SWITCHER_COMPACT_HEIGHT;
+
+  if (reducedMotion || Math.abs(startHeight - targetHeight) < 1) {
+    await appWindow.setSize(new LogicalSize(320, targetHeight));
+    return;
+  }
+
+  const startedAt = performance.now();
+  while (generation === accountSwitcherResizeGeneration) {
+    const progress = Math.min(1, (performance.now() - startedAt) / ACCOUNT_SWITCHER_RESIZE_MS);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const height = startHeight + (targetHeight - startHeight) * eased;
+    await appWindow.setSize(new LogicalSize(320, height));
+    if (progress >= 1) return;
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+  }
+}
+
 export async function setWidgetClip(expanded: boolean): Promise<void> {
   if (!isTauri()) return;
   const { invoke } = await import("@tauri-apps/api/core");

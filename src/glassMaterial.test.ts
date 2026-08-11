@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 // @ts-expect-error Vitest runs in Node; the production bundle does not include this test module.
 import { readFileSync } from "node:fs";
 import tauriConfig from "../src-tauri/tauri.conf.json";
+import capabilities from "../src-tauri/capabilities/default.json";
 import cargoManifest from "../src-tauri/Cargo.toml?raw";
 import frontendApp from "./App.tsx?raw";
 import frontendBridge from "./lib/bridge.ts?raw";
@@ -12,6 +13,7 @@ const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 type TransparentWindowConfig = {
   label: string;
+  height?: number;
   transparent?: boolean;
   backgroundColor?: string;
 };
@@ -21,6 +23,8 @@ describe("Windows glass material", () => {
     const windows = tauriConfig.app.windows as TransparentWindowConfig[];
     expect(windows.map((window) => window.label)).toEqual(["widget", "palette", "palette-editor", "account-switcher"]);
     expect(windows.every((window) => window.transparent && window.backgroundColor === "#00000000")).toBe(true);
+    expect(windows.find((window) => window.label === "account-switcher")?.height).toBe(180);
+    expect(capabilities.windows).toContain("account-switcher");
   });
 
   it("enables Win32 host backdrop before creating the clipped blur brush", () => {
@@ -75,6 +79,11 @@ describe("Windows glass material", () => {
     expect(nativeApp).toContain('position_palette_windows(&app)?;\n    window_material::sync_window_material(&app);');
     expect(nativeApp).toContain('[\"widget\", \"palette\", \"palette-editor\", \"account-switcher\"].contains(&window.label())');
     expect(nativeApp).toContain('emit_to(\"account-switcher\", \"account-switcher-opened\", ())');
+    expect(nativeApp).toContain("LogicalSize::new(320.0, 180.0)");
+    expect(nativeApp).toContain('window.label() == \"account-switcher\" && matches!(event, WindowEvent::Resized(_))');
+    expect(frontendBridge).toContain("ACCOUNT_SWITCHER_COMPACT_HEIGHT = 180");
+    expect(frontendBridge).toContain("ACCOUNT_SWITCHER_EXPANDED_HEIGHT = 240");
+    expect(frontendBridge).toContain("accountSwitcherResizeGeneration");
   });
 
   it("keeps the more transparent glass colors and accessibility fallbacks", () => {
@@ -99,6 +108,8 @@ describe("Windows glass material", () => {
     expect(styles).toContain(".account-icon-button--delete { grid-column: 7; }");
     expect(styles).toContain("overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none;");
     expect(styles).toContain(".account-switcher__body::-webkit-scrollbar { display: none; width: 0; height: 0; }");
+    expect(styles).toContain(".account-switcher__form-shell { min-height: 0; display: grid; grid-template-rows: 0fr;");
+    expect(styles).toContain(".account-switcher__form-shell--open { grid-template-rows: 1fr;");
   });
 
   it("draws one internal stroke for every glass card", () => {

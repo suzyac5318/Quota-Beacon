@@ -591,6 +591,9 @@ fn open_account_switcher(app: AppHandle, state: State<'_, AppState>) -> Result<a
     let account = app
         .get_webview_window("account-switcher")
         .ok_or_else(|| "account window missing".to_string())?;
+    account
+        .set_size(tauri::LogicalSize::new(320.0, 180.0))
+        .map_err(|error| format!("failed to reset account window size: {error}"))?;
     let _ = app.emit_to("account-switcher", "account-switcher-opened", ());
     account.show().map_err(|error| format!("failed to show account window: {error}"))?;
     let _ = account.set_always_on_top(true);
@@ -1089,6 +1092,9 @@ pub fn run() {
             }
             if window.label() == "widget" && material_geometry_changed {
                 let _ = position_palette_windows(window.app_handle());
+                let _ = position_account_window(window.app_handle());
+            }
+            if window.label() == "account-switcher" && matches!(event, WindowEvent::Resized(_)) {
                 let _ = position_account_window(window.app_handle());
             }
             if ["widget", "palette", "palette-editor", "account-switcher"].contains(&window.label())

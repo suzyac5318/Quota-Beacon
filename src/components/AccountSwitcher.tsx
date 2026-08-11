@@ -1,5 +1,5 @@
 import { Check, PencilSimple, Plus, Trash } from "@phosphor-icons/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   accountCopy,
   beginAccountLogin,
@@ -15,7 +15,7 @@ import {
   type AccountLoginStatus,
   type AccountVault,
 } from "../lib/accounts";
-import { getPreferences } from "../lib/bridge";
+import { getPreferences, setAccountSwitcherExpanded } from "../lib/bridge";
 import { normalizeLanguage } from "../lib/i18n";
 import type { Language } from "../types";
 
@@ -27,6 +27,7 @@ export function AccountSwitcher() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [addFormOpen, setAddFormOpen] = useState(false);
+  const aliasInputRef = useRef<HTMLInputElement>(null);
   const t = useMemo(() => accountCopy(language), [language]);
 
   useEffect(() => {
@@ -90,8 +91,14 @@ export function AccountSwitcher() {
 
   const addFormVisible = addFormOpen || login?.status === "running";
 
+  useEffect(() => {
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    void setAccountSwitcherExpanded(addFormVisible, reducedMotion).catch((error) => setNotice(String(error)));
+    if (addFormVisible) aliasInputRef.current?.focus();
+  }, [addFormVisible]);
+
   return (
-    <main className="account-switcher" aria-label={t.title}>
+    <main className={`account-switcher${addFormVisible ? " account-switcher--expanded" : ""}`} aria-label={t.title}>
       <header className="account-switcher__header">
         <div><h1>{t.title}</h1><p>{t.localTokens}</p></div>
         <button type="button" onClick={toggleAddForm} disabled={login?.status === "running"} aria-label={t.add} title={t.add} aria-expanded={addFormVisible} aria-controls="account-add-form"><Plus /></button>
@@ -114,9 +121,9 @@ export function AccountSwitcher() {
         ))}
       </section>
 
-      {addFormVisible ? (
+      <div className={`account-switcher__form-shell${addFormVisible ? " account-switcher__form-shell--open" : ""}`} aria-hidden={!addFormVisible} inert={!addFormVisible}>
         <footer className="account-switcher__footer" id="account-add-form">
-          <label><span>{t.alias}</span><input value={alias} maxLength={32} autoFocus onChange={(event) => setAlias(event.target.value)} /></label>
+          <label><span>{t.alias}</span><input ref={aliasInputRef} value={alias} maxLength={32} disabled={!addFormVisible} onChange={(event) => setAlias(event.target.value)} /></label>
           {login?.status === "running" ? (
             <button type="button" className="account-secondary" onClick={() => void handleCancel()}>{t.cancel}</button>
           ) : !vault?.currentLoginSaved ? (
@@ -125,7 +132,7 @@ export function AccountSwitcher() {
             <button type="button" disabled={!alias.trim()} onClick={() => void handleAdd()}><Plus />{t.add}</button>
           )}
         </footer>
-      ) : null}
+      </div>
       {login?.status === "running" ? <p className="account-notice" role="status">{t.browser}</p> : notice ? <p className="account-notice" role="status">{notice}</p> : null}
     </main>
   );

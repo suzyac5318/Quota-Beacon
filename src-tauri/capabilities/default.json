@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capabilities for the floating widget",
-  "windows": ["widget", "palette", "palette-editor"],
+  "windows": ["widget", "palette", "palette-editor", "account-switcher"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
