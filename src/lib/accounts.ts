@@ -110,6 +110,7 @@ export async function closeAccountSwitcher(): Promise<void> {
 export async function listenAccountEvents(handlers: {
   onVault: (vault: AccountVault) => void;
   onSwitched?: (outcome: AccountSwitchOutcome) => void;
+  onOpened?: () => void;
   onClosed?: () => void;
   onError?: (message: string) => void;
 }): Promise<() => void> {
@@ -117,9 +118,10 @@ export async function listenAccountEvents(handlers: {
   const { listen } = await import("@tauri-apps/api/event");
   const unlistenVault = await listen<AccountVault>("account-vault-changed", (event) => handlers.onVault(event.payload));
   const unlistenSwitched = await listen<AccountSwitchOutcome>("account-switch-completed", (event) => handlers.onSwitched?.(event.payload));
+  const unlistenOpened = await listen("account-switcher-opened", () => handlers.onOpened?.());
   const unlistenClosed = await listen("account-switcher-closed", () => handlers.onClosed?.());
   const unlistenError = await listen<string>("account-operation-error", (event) => handlers.onError?.(event.payload));
-  return () => { unlistenVault(); unlistenSwitched(); unlistenClosed(); unlistenError(); };
+  return () => { unlistenVault(); unlistenSwitched(); unlistenOpened(); unlistenClosed(); unlistenError(); };
 }
 
 export function accountCopy(language: Language) {

@@ -74,6 +74,7 @@ describe("Windows glass material", () => {
     expect(frontendBridge).toContain("physicalSize.width / cssViewportWidth");
     expect(nativeApp).toContain('position_palette_windows(&app)?;\n    window_material::sync_window_material(&app);');
     expect(nativeApp).toContain('[\"widget\", \"palette\", \"palette-editor\", \"account-switcher\"].contains(&window.label())');
+    expect(nativeApp).toContain('emit_to(\"account-switcher\", \"account-switcher-opened\", ())');
   });
 
   it("keeps the more transparent glass colors and accessibility fallbacks", () => {

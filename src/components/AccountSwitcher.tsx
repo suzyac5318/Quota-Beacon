@@ -33,7 +33,12 @@ export function AccountSwitcher() {
     void getPreferences().then((preferences) => setLanguage(normalizeLanguage(preferences.language))).catch(() => undefined);
     void getAccountVault().then(setVault).catch((error) => setNotice(String(error)));
     let cleanup = () => {};
-    void listenAccountEvents({ onVault: setVault, onSwitched: () => setNotice(t.switched), onError: setNotice }).then((value) => { cleanup = value; });
+    void listenAccountEvents({
+      onVault: setVault,
+      onSwitched: () => setNotice(t.switched),
+      onOpened: () => { setAddFormOpen(false); setAlias(""); },
+      onError: setNotice,
+    }).then((value) => { cleanup = value; });
     return () => cleanup();
   }, [t.switched]);
 
@@ -77,11 +82,19 @@ export function AccountSwitcher() {
     setLogin(null);
   };
 
+  const toggleAddForm = () => {
+    if (login?.status === "running") return;
+    if (addFormOpen) setAlias("");
+    setAddFormOpen((open) => !open);
+  };
+
+  const addFormVisible = addFormOpen || login?.status === "running";
+
   return (
     <main className="account-switcher" aria-label={t.title}>
       <header className="account-switcher__header">
         <div><h1>{t.title}</h1><p>{t.localTokens}</p></div>
-        <button type="button" onClick={() => setAddFormOpen(true)} aria-label={t.add} title={t.add} aria-expanded={addFormOpen} aria-controls="account-add-form"><Plus /></button>
+        <button type="button" onClick={toggleAddForm} disabled={login?.status === "running"} aria-label={t.add} title={t.add} aria-expanded={addFormVisible} aria-controls="account-add-form"><Plus /></button>
       </header>
 
       <section className="account-switcher__body" aria-live="polite">
@@ -101,7 +114,7 @@ export function AccountSwitcher() {
         ))}
       </section>
 
-      {addFormOpen || login?.status === "running" ? (
+      {addFormVisible ? (
         <footer className="account-switcher__footer" id="account-add-form">
           <label><span>{t.alias}</span><input value={alias} maxLength={32} autoFocus onChange={(event) => setAlias(event.target.value)} /></label>
           {login?.status === "running" ? (

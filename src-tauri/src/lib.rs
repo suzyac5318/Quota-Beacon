@@ -591,6 +591,7 @@ fn open_account_switcher(app: AppHandle, state: State<'_, AppState>) -> Result<a
     let account = app
         .get_webview_window("account-switcher")
         .ok_or_else(|| "account window missing".to_string())?;
+    let _ = app.emit_to("account-switcher", "account-switcher-opened", ());
     account.show().map_err(|error| format!("failed to show account window: {error}"))?;
     let _ = account.set_always_on_top(true);
     position_account_window(&app)?;

@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountSwitcher } from "./AccountSwitcher";
 
-const mocks = vi.hoisted(() => ({ saveCurrentAccount: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  saveCurrentAccount: vi.fn(),
+  accountHandlers: null as null | { onOpened?: () => void },
+}));
 
 vi.mock("../lib/accounts", () => ({
   accountCopy: () => ({
@@ -15,7 +18,7 @@ vi.mock("../lib/accounts", () => ({
   }),
   beginAccountLogin: vi.fn(), cancelAccountLogin: vi.fn(), closeAccountSwitcher: vi.fn(), deleteAccount: vi.fn(),
   getAccountVault: vi.fn(async () => ({ profiles: [], activeProfileId: null, hasCurrentLogin: true, currentLoginSaved: false })),
-  listenAccountEvents: vi.fn(async () => () => {}), pollAccountLogin: vi.fn(), renameAccount: vi.fn(),
+  listenAccountEvents: vi.fn(async (handlers: { onOpened?: () => void }) => { mocks.accountHandlers = handlers; return () => {}; }), pollAccountLogin: vi.fn(), renameAccount: vi.fn(),
   saveCurrentAccount: mocks.saveCurrentAccount.mockResolvedValue({
     profiles: [{ id: "personal", alias: "个人号", maskedEmail: "p***@example.com", isActive: true, credentialStatus: "ready" }],
     activeProfileId: "personal", hasCurrentLogin: true, currentLoginSaved: true,
@@ -28,6 +31,12 @@ vi.mock("../lib/bridge", () => ({
 }));
 
 describe("AccountSwitcher", () => {
+  beforeEach(() => {
+    cleanup();
+    mocks.accountHandlers = null;
+    mocks.saveCurrentAccount.mockClear();
+  });
+
   it("requires an explicit user action before saving the current login", async () => {
     const view = render(<AccountSwitcher />);
     await waitFor(() => expect(view.getByText("请先显式保存当前 Codex 登录，再添加其他账号。")).not.toBeNull());
@@ -37,9 +46,25 @@ describe("AccountSwitcher", () => {
     expect(addButton.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(addButton);
     expect(addButton.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.change(view.getByLabelText("账号名称"), { target: { value: "未提交" } });
+    fireEvent.click(addButton);
+    expect(addButton.getAttribute("aria-expanded")).toBe("false");
+    expect(view.queryByLabelText("账号名称")).toBeNull();
+    fireEvent.click(addButton);
     fireEvent.change(view.getByLabelText("账号名称"), { target: { value: "个人号" } });
     fireEvent.click(view.getByRole("button", { name: "保存当前账号" }));
     await waitFor(() => expect(mocks.saveCurrentAccount).toHaveBeenCalledWith("个人号"));
     expect(view.getByText("p***@example.com")).not.toBeNull();
+  });
+
+  it("resets the add form whenever the account window is reopened", async () => {
+    const view = render(<AccountSwitcher />);
+    await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());
+    const addButton = view.getByRole("button", { name: "添加账号" });
+    fireEvent.click(addButton);
+    fireEvent.change(view.getByLabelText("账号名称"), { target: { value: "未提交" } });
+    act(() => mocks.accountHandlers?.onOpened?.());
+    expect(addButton.getAttribute("aria-expanded")).toBe("false");
+    expect(view.queryByLabelText("账号名称")).toBeNull();
   });
 });
