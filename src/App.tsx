@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QuotaCard } from "./components/QuotaCard";
-import { getAccountVault, listenAccountEvents, openAccountSwitcher, type AccountVault } from "./lib/accounts";
+import { closeAccountSwitcher, getAccountVault, listenAccountEvents, openAccountSwitcher, type AccountVault } from "./lib/accounts";
 import { closePalettePreview, fetchSnapshots, fetchTokenUsage, getPreferences, listenDesktopEvents, listenPalettePreview, openPalettePreview, setAlwaysOnTop, setWidgetClip, setWidgetExpanded, startDragging, syncWidgetCssScale, updatePreferences } from "./lib/bridge";
 import { clampPercent, getPrimaryQuota } from "./lib/format";
 import { copy, nextLanguage, normalizeLanguage } from "./lib/i18n";
@@ -38,6 +38,8 @@ export default function App() {
   const consumptionTimers = useRef(new Map<string, number>());
   const paletteActive = useRef(false);
   const accountActive = useRef(false);
+  const accountOpening = useRef(false);
+  const accountClosing = useRef(false);
   const paletteOpening = useRef(false);
   const paletteClosing = useRef(false);
   const hoveredRef = useRef(false);
@@ -206,6 +208,8 @@ export default function App() {
       onError: setOperationError,
       onClosed: () => {
         accountActive.current = false;
+        accountOpening.current = false;
+        accountClosing.current = false;
         if (!hoveredRef.current) scheduleCollapse(false);
       },
     }).then((unlisten) => { if (cancelled) unlisten(); else cleanup = unlisten; });
@@ -213,6 +217,22 @@ export default function App() {
   }, [refreshAfterAccountSwitch, scheduleCollapse]);
 
   useEffect(() => () => clearWidgetMotionTimers(), [clearWidgetMotionTimers]);
+
+  useEffect(() => {
+    const closeFromWidgetInteraction = (event: PointerEvent) => {
+      if (!accountActive.current || accountClosing.current) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest(".account-chip")) return;
+      accountClosing.current = true;
+      if (accountOpening.current) return;
+      void closeAccountSwitcher().catch(() => {
+        accountClosing.current = false;
+        setOperationError("Unable to close account manager.");
+      });
+    };
+    document.addEventListener("pointerdown", closeFromWidgetInteraction, true);
+    return () => document.removeEventListener("pointerdown", closeFromWidgetInteraction, true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -232,7 +252,16 @@ export default function App() {
           });
           return;
         }
-        if (!accountActive.current) scheduleCollapse(false);
+        if (accountActive.current) {
+          if (accountClosing.current) return;
+          accountClosing.current = true;
+          void closeAccountSwitcher().catch(() => {
+            accountClosing.current = false;
+            setOperationError("Unable to close account manager.");
+          });
+          return;
+        }
+        scheduleCollapse(false);
       },
       onConversationTokenUsage: setConversationTokenUsage,
     }).then((value) => {
@@ -345,13 +374,33 @@ export default function App() {
   }, [clearWidgetMotionTimers, current]);
 
   const handleAccount = useCallback(() => {
+    const requestClose = () => {
+      void closeAccountSwitcher().catch(() => {
+        accountClosing.current = false;
+        setOperationError("Unable to close account manager.");
+      });
+    };
+    if (accountActive.current) {
+      if (accountClosing.current) return;
+      accountClosing.current = true;
+      if (!accountOpening.current) requestClose();
+      return;
+    }
     accountActive.current = true;
+    accountOpening.current = true;
+    accountClosing.current = false;
     clearWidgetMotionTimers();
     void setWidgetClip(true);
     setCompact(false);
     void setWidgetExpanded(true);
-    void openAccountSwitcher().then(setAccountVault).catch(() => {
+    void openAccountSwitcher().then((vault) => {
+      accountOpening.current = false;
+      setAccountVault(vault);
+      if (accountClosing.current) requestClose();
+    }).catch(() => {
       accountActive.current = false;
+      accountOpening.current = false;
+      accountClosing.current = false;
       setOperationError("Unable to open account manager.");
     });
   }, [clearWidgetMotionTimers]);

@@ -29,12 +29,14 @@ const snapshot: ProviderSnapshot = {
 };
 
 const accountHarness = vi.hoisted(() => ({
-  handlers: null as null | { onSwitched?: () => void },
+  handlers: null as null | { onSwitched?: () => void; onClosed?: () => void },
+  desktopHandlers: null as null | { onFocusLost: () => void },
 }));
 
 vi.mock("./lib/accounts", () => ({
+  closeAccountSwitcher: vi.fn(async () => {}),
   getAccountVault: vi.fn(async () => ({ profiles: [], activeProfileId: null, hasCurrentLogin: true, currentLoginSaved: false })),
-  listenAccountEvents: vi.fn(async (handlers: { onSwitched?: () => void }) => {
+  listenAccountEvents: vi.fn(async (handlers: { onSwitched?: () => void; onClosed?: () => void }) => {
     accountHarness.handlers = handlers;
     return () => {};
   }),
@@ -54,7 +56,10 @@ vi.mock("./lib/bridge", () => ({
     updatedAt: new Date().toISOString(),
   })),
   getPreferences: vi.fn(async () => preferences),
-  listenDesktopEvents: vi.fn(async () => () => {}),
+  listenDesktopEvents: vi.fn(async (handlers: { onFocusLost: () => void }) => {
+    accountHarness.desktopHandlers = handlers;
+    return () => {};
+  }),
   listenPalettePreview: vi.fn(async () => () => {}),
   openPalettePreview: vi.fn(async () => {}),
   setAlwaysOnTop: vi.fn(async () => preferences),
@@ -69,6 +74,7 @@ describe("quota refresh coordination", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     accountHarness.handlers = null;
+    accountHarness.desktopHandlers = null;
   });
 
   it("coalesces focus refreshes and does not refresh quota on hover", async () => {
@@ -110,6 +116,47 @@ describe("quota refresh coordination", () => {
 
     await act(async () => resolveNext([nextSnapshot]));
     await waitFor(() => expect(view.getAllByText("63")).toHaveLength(2));
+    view.unmount();
+  });
+
+  it("toggles the account switcher from the account button", async () => {
+    const { closeAccountSwitcher, openAccountSwitcher } = await import("./lib/accounts");
+    vi.mocked(fetchSnapshots).mockResolvedValue([snapshot]);
+    const view = render(<App />);
+    await waitFor(() => expect(view.getAllByText("74")).toHaveLength(2));
+
+    const accountButton = view.getByRole("button", { name: /CODEX/i });
+    fireEvent.click(accountButton);
+    await waitFor(() => expect(openAccountSwitcher).toHaveBeenCalledTimes(1));
+    fireEvent.click(accountButton);
+    await waitFor(() => expect(closeAccountSwitcher).toHaveBeenCalledTimes(1));
+    view.unmount();
+  });
+
+  it("closes the account switcher when the app loses focus", async () => {
+    const { closeAccountSwitcher } = await import("./lib/accounts");
+    vi.mocked(fetchSnapshots).mockResolvedValue([snapshot]);
+    const view = render(<App />);
+    await waitFor(() => expect(view.getAllByText("74")).toHaveLength(2));
+    await waitFor(() => expect(accountHarness.desktopHandlers).not.toBeNull());
+
+    fireEvent.click(view.getByRole("button", { name: /CODEX/i }));
+    await waitFor(() => expect(accountHarness.handlers).not.toBeNull());
+    act(() => accountHarness.desktopHandlers?.onFocusLost());
+    await waitFor(() => expect(closeAccountSwitcher).toHaveBeenCalledTimes(1));
+    view.unmount();
+  });
+
+  it("closes the account switcher when another widget area is pressed", async () => {
+    const { closeAccountSwitcher, openAccountSwitcher } = await import("./lib/accounts");
+    vi.mocked(fetchSnapshots).mockResolvedValue([snapshot]);
+    const view = render(<App />);
+    await waitFor(() => expect(view.getAllByText("74")).toHaveLength(2));
+
+    fireEvent.click(view.getByRole("button", { name: /CODEX/i }));
+    await waitFor(() => expect(openAccountSwitcher).toHaveBeenCalledTimes(1));
+    fireEvent.pointerDown(view.getByRole("progressbar"));
+    await waitFor(() => expect(closeAccountSwitcher).toHaveBeenCalledTimes(1));
     view.unmount();
   });
 });
