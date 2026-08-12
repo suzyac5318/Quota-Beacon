@@ -10,14 +10,17 @@ Quota Beacon is designed to be local-first and minimal.
 
 ## What It Stores
 
-Quota Beacon stores only widget preferences in its own application config directory:
+Quota Beacon stores widget preferences in its own application config directory:
 
 - locked state
 - always-on-top state
 - pinned provider
 - auto-rotate interval
+- language and custom quota palette
 
-It does not copy or persist Codex tokens, account IDs, raw quota responses, user prompts, chat history, or local file paths.
+When the user explicitly saves a Codex account on macOS, Quota Beacon stores that account's login data only in the local macOS Keychain under the app-scoped service `app.quotabeacon.desktop.accounts`. The app config directory stores only the account alias, masked email, one-way account fingerprint, random profile ID, and active profile ID; it does not store the token or complete account ID there.
+
+Quota Beacon does not store raw quota responses, user prompts, or chat history. Saved credentials and account metadata are not uploaded to Quota Beacon or any third party.
 
 ## What It Sends
 

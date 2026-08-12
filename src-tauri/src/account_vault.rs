@@ -383,6 +383,28 @@ impl AccountVault {
         })
     }
 
+    pub fn read_profile_credentials(&self, profile_id: &str) -> Result<Vec<u8>, String> {
+        let profile = self
+            .state
+            .profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .ok_or_else(|| "Saved account was not found.".to_string())?;
+        let raw = self
+            .secrets
+            .get(profile_id)
+            .map_err(|_| "Saved credentials are unavailable. Sign in again.".to_string())?;
+        if raw.len() as u64 > codex::MAX_AUTH_BYTES {
+            return Err("Saved credentials are too large. Sign in again.".into());
+        }
+        let identity = codex::credential_identity(&raw)
+            .map_err(|_| "Saved credentials are invalid. Sign in again.".to_string())?;
+        if fingerprint(&identity) != profile.fingerprint {
+            return Err("Saved account identity does not match its metadata.".into());
+        }
+        Ok(raw)
+    }
+
     fn profile_view(&self, profile: &AccountProfile) -> AccountProfileView {
         let credential_status = match self.secrets.get(&profile.id) {
             Ok(raw)
@@ -617,6 +639,30 @@ mod tests {
         assert_eq!(outcome.profile.alias, "B");
         assert_eq!(fs::read(&auth).unwrap(), second);
         assert!(vault.delete(&first_id).is_ok());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reads_one_profile_from_the_secret_store_without_switching_auth() {
+        let (root, auth, _, mut vault) = test_vault();
+        let current = fixture("acct-a", "a@example.com", "token-a");
+        let inactive = fixture("acct-b", "b@example.com", "token-b");
+        fs::write(&auth, &current).unwrap();
+        vault.save_current("A").unwrap();
+        let view = vault.import_credentials("B", &inactive).unwrap();
+        let inactive_id = view
+            .profiles
+            .iter()
+            .find(|item| item.alias == "B")
+            .unwrap()
+            .id
+            .clone();
+
+        assert_eq!(
+            vault.read_profile_credentials(&inactive_id).unwrap(),
+            inactive
+        );
+        assert_eq!(fs::read(&auth).unwrap(), current);
         let _ = fs::remove_dir_all(root);
     }
 

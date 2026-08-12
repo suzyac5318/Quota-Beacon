@@ -365,11 +365,7 @@ async fn limited_json(mut response: reqwest::Response) -> Result<Value, ()> {
     serde_json::from_slice(&bytes).map_err(|_| ())
 }
 
-pub async fn fetch_snapshot(client: &reqwest::Client) -> ProviderSnapshot {
-    let auth = match load_auth() {
-        Ok(value) => value,
-        Err(message) => return ProviderSnapshot::failure("signed_out", message),
-    };
+async fn fetch_snapshot_with_auth(client: &reqwest::Client, auth: Auth) -> ProviderSnapshot {
     let request_headers = match headers(&auth) {
         Ok(value) => value,
         Err(message) => return ProviderSnapshot::failure("signed_out", message),
@@ -500,6 +496,25 @@ pub async fn fetch_snapshot(client: &reqwest::Client) -> ProviderSnapshot {
         status: "ok".into(),
         message: None,
     }
+}
+
+pub(crate) async fn fetch_snapshot_from_bytes(
+    client: &reqwest::Client,
+    raw: &[u8],
+) -> ProviderSnapshot {
+    let auth = match parse_auth(raw) {
+        Ok(value) => value,
+        Err(message) => return ProviderSnapshot::failure("signed_out", message),
+    };
+    fetch_snapshot_with_auth(client, auth).await
+}
+
+pub async fn fetch_snapshot(client: &reqwest::Client) -> ProviderSnapshot {
+    let auth = match load_auth() {
+        Ok(value) => value,
+        Err(message) => return ProviderSnapshot::failure("signed_out", message),
+    };
+    fetch_snapshot_with_auth(client, auth).await
 }
 
 #[cfg(test)]

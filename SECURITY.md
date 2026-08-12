@@ -12,7 +12,7 @@ Do not include tokens, account IDs, raw backend responses, unredacted screenshot
 
 ## Security Boundaries
 
-- The app does not persist Codex credentials.
+- Codex credentials are persisted only after an explicit account-save action and only in the local macOS Keychain; account metadata files do not contain tokens or complete account IDs.
 - The app does not log request headers or raw quota responses.
 - The app caps auth file reads at 256 KB and quota responses at 1 MB.
 - The app does not follow redirects for quota HTTP requests.

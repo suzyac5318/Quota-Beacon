@@ -1,4 +1,4 @@
-# Quota Beacon macOS 1.7.0
+# Quota Beacon macOS 1.8.0
 
 Quota Beacon is a local-first floating desktop widget for checking Codex usage limits from the local Codex Desktop login state.
 
@@ -24,7 +24,7 @@ This macOS build uses an ad-hoc signature and is not notarized. If macOS blocks 
 
 ## Privacy
 
-Quota Beacon does not store Codex tokens, account IDs, prompts, chats, raw quota responses, or local auth paths. It stores only widget preferences. See `PRIVACY.md`.
+Quota Beacon stores explicitly saved Mac account credentials only in the local macOS Keychain. Its metadata files do not contain tokens or complete account IDs, and it does not store prompts, chats, or raw quota responses. See `PRIVACY.md`.
 
 ## Notes
 

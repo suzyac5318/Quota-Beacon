@@ -1,5 +1,5 @@
 import { CheckCircle, PencilSimple, Plus, SignIn, Trash, X } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   accountCopy,
   beginAccountLogin,
@@ -7,6 +7,7 @@ import {
   closeAccountSwitcher,
   deleteAccount,
   getAccountVault,
+  getAccountWeeklyQuotas,
   listenAccountEvents,
   pollAccountLogin,
   renameAccount,
@@ -14,6 +15,7 @@ import {
   setAccountSwitcherExpanded,
   switchAccount,
   type AccountLoginStatus,
+  type AccountWeeklyQuota,
   type AccountVault,
 } from "../lib/accounts";
 import { getPreferences } from "../lib/bridge";
@@ -27,22 +29,57 @@ export function AccountSwitcher() {
   const [addOpen, setAddOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [login, setLogin] = useState<AccountLoginStatus | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ id: number; kind: "error" | "info" | "success"; message: string } | null>(null);
+  const [weeklyQuotas, setWeeklyQuotas] = useState<Map<string, AccountWeeklyQuota>>(() => new Map());
+  const noticeSequence = useRef(0);
   const t = useMemo(() => accountCopy(language), [language]);
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const quotaScope = vault ? `${vault.activeProfileId ?? ""}:${vault.profiles.map((profile) => `${profile.id}:${profile.credentialStatus}`).join("|")}` : "";
+  const showNotice = useCallback((message: string, kind: "error" | "info" | "success" = "error") => {
+    setNotice({ id: ++noticeSequence.current, kind, message });
+  }, []);
 
   useEffect(() => {
     void getPreferences().then((value) => setLanguage(normalizeLanguage(value.language)));
-    void getAccountVault().then(setVault).catch((error) => setNotice(String(error)));
+    void getAccountVault().then(setVault).catch((error) => showNotice(String(error)));
     let cancelled = false;
     let cleanup = () => {};
     void listenAccountEvents({
       onVault: setVault,
-      onSwitched: () => setNotice(t.switched),
-      onError: setNotice,
+      onSwitched: () => showNotice(t.switched, "success"),
+      onError: (message) => showNotice(message),
     }).then((unlisten) => { if (cancelled) unlisten(); else cleanup = unlisten; });
     return () => { cancelled = true; cleanup(); };
-  }, [t.switched]);
+  }, [showNotice, t.switched]);
+
+  useEffect(() => {
+    if (notice?.kind !== "success") return;
+    const noticeId = notice.id;
+    const timer = window.setTimeout(() => {
+      setNotice((current) => current?.id === noticeId ? null : current);
+    }, 10_000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  useEffect(() => {
+    let disposed = false;
+    let inFlight = false;
+    const refreshWeeklyQuotas = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const values = await getAccountWeeklyQuotas();
+        if (!disposed) setWeeklyQuotas(new Map(values.map((value) => [value.profileId, value])));
+      } catch {
+        // Keep the last successful values; account operations remain independently usable.
+      } finally {
+        inFlight = false;
+      }
+    };
+    void refreshWeeklyQuotas();
+    const timer = window.setInterval(() => void refreshWeeklyQuotas(), 10_000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [quotaScope]);
 
   useEffect(() => {
     void setAccountSwitcherExpanded(addOpen || Boolean(notice), reducedMotion);
@@ -59,12 +96,12 @@ export function AccountSwitcher() {
           setNotice(null);
           void getAccountVault().then(setVault);
         } else if (status.status === "failed") {
-          setNotice(status.message);
+          showNotice(status.message ?? "Codex login failed.");
         }
-      }).catch((error) => setNotice(String(error)));
+      }).catch((error) => showNotice(String(error)));
     }, 750);
     return () => window.clearInterval(id);
-  }, [login]);
+  }, [login, showNotice]);
 
   const run = useCallback(async (key: string, action: () => Promise<AccountVault>) => {
     setBusy(key);
@@ -72,28 +109,28 @@ export function AccountSwitcher() {
     try {
       setVault(await action());
     } catch (error) {
-      setNotice(String(error));
+      showNotice(String(error));
     } finally {
       setBusy(null);
     }
-  }, []);
+  }, [showNotice]);
 
   const beginLogin = useCallback(async (replaceProfileId: string | null = null) => {
     if (!alias.trim() && !replaceProfileId) return;
     setBusy(replaceProfileId ?? "login");
-    setNotice(t.browser);
+    showNotice(t.browser, "info");
     try {
       const profile = replaceProfileId ? vault?.profiles.find((item) => item.id === replaceProfileId) : null;
       const status = await beginAccountLogin(profile?.alias ?? alias, replaceProfileId);
       setLogin(status);
     } catch (error) {
-      setNotice(String(error));
+      showNotice(String(error));
     } finally {
       setBusy(null);
     }
-  }, [alias, t.browser, vault?.profiles]);
+  }, [alias, showNotice, t.browser, vault?.profiles]);
 
-  const close = () => void closeAccountSwitcher().catch((error) => setNotice(String(error)));
+  const close = () => void closeAccountSwitcher().catch((error) => showNotice(String(error)));
 
   return (
     <main className="account-switcher" aria-label={t.title}>
@@ -105,20 +142,24 @@ export function AccountSwitcher() {
         </div>
       </header>
 
-      {notice ? <p className="account-switcher__notice" role="status">{notice}</p> : null}
+      {notice ? <p className="account-switcher__notice" role="status">{notice.message}</p> : null}
 
       <section className="account-list" aria-live="polite">
-        {vault?.profiles.map((profile) => (
+        {vault?.profiles.map((profile) => {
+          const quota = weeklyQuotas.get(profile.id);
+          const needsLogin = profile.credentialStatus === "invalid" || quota?.status === "signed_out";
+          return (
           <article className={`account-row${profile.isActive ? " account-row--active" : ""}`} key={profile.id}>
             <span className="account-row__state" aria-hidden="true">{profile.isActive ? <CheckCircle weight="fill" /> : <SignIn />}</span>
             <div className="account-row__identity">
               <strong>{profile.alias}</strong>
               <small>{profile.maskedEmail ?? (profile.credentialStatus === "invalid" ? t.invalid : "Codex")}</small>
+              <span className="account-row__quota" title={quota?.message ?? undefined}>{needsLogin ? t.invalid : quota?.remainingPercent != null ? `${t.weekly} ${Math.round(quota.remainingPercent)}%` : t.quotaUnavailable}</span>
             </div>
             {profile.isActive ? <span className="account-row__current">{t.current}</span> : (
-              <button type="button" className="account-row__switch" disabled={busy !== null || profile.credentialStatus === "invalid"} onClick={() => void run(profile.id, async () => { await switchAccount(profile.id); return getAccountVault(); })}>{t.switch}</button>
+              <button type="button" className="account-row__switch" disabled={busy !== null || needsLogin} onClick={() => void run(profile.id, async () => { await switchAccount(profile.id); return getAccountVault(); })}>{t.switch}</button>
             )}
-            {profile.credentialStatus === "invalid" ? <button type="button" className="account-icon-button" onClick={() => void beginLogin(profile.id)} aria-label={t.invalid}><SignIn /></button> : null}
+            {needsLogin ? <button type="button" className="account-icon-button" onClick={() => void beginLogin(profile.id)} aria-label={t.invalid}><SignIn /></button> : null}
             <button type="button" className="account-icon-button" onClick={() => {
               const next = window.prompt(t.alias, profile.alias);
               if (next) void run(`rename-${profile.id}`, () => renameAccount(profile.id, next));
@@ -127,7 +168,8 @@ export function AccountSwitcher() {
               if (window.confirm(`${t.remove} “${profile.alias}”?`)) void run(`delete-${profile.id}`, () => deleteAccount(profile.id));
             }} aria-label={t.remove}><Trash /></button>
           </article>
-        ))}
+          );
+        })}
         {vault && vault.profiles.length === 0 ? <p className="account-list__empty">{t.empty}</p> : null}
       </section>
 

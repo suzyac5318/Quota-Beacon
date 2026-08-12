@@ -330,7 +330,7 @@ button { font: inherit; }
 .account-list { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; overflow-y: auto; scrollbar-width: none; }
 .account-list::-webkit-scrollbar { display: none; }
 .account-list__empty { margin: auto; max-width: 25ch; color: #677285; text-align: center; font-size: 11px; line-height: 1.45; }
-.account-row { display: grid; grid-template-columns: 22px minmax(0,1fr) auto repeat(3,28px); align-items: center; gap: 4px; min-height: 44px; padding: 5px 6px; border: 1px solid rgba(55,75,104,.09); border-radius: 12px; background: rgba(255,255,255,.34); }
+.account-row { display: grid; grid-template-columns: 22px minmax(0,1fr) auto repeat(3,28px); align-items: center; gap: 4px; min-height: 49px; padding: 5px 6px; border: 1px solid rgba(55,75,104,.09); border-radius: 12px; background: rgba(255,255,255,.34); }
 .account-row--active { background: rgba(214,235,224,.62); }
 .account-row__state { display: grid; place-items: center; color: #527561; }
 .account-row__state svg { width: 16px; height: 16px; }
@@ -338,6 +338,7 @@ button { font: inherit; }
 .account-row__identity strong, .account-row__identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-row__identity strong { font-size: 11px; }
 .account-row__identity small { color: #697587; font-size: 9px; }
+.account-row__quota { display: block; margin-top: 2px; color: #3c618c; font-size: 8px; font-weight: 700; white-space: nowrap; }
 .account-row__current { padding: 3px 7px; border-radius: 999px; color: #3f7056; background: rgba(255,255,255,.5); font-size: 9px; font-weight: 700; }
 .account-row__switch { min-height: 27px; padding: 0 8px; border-radius: 8px; font-size: 10px; }
 .account-add { display: grid; gap: 6px; padding-top: 7px; border-top: 1px solid rgba(54,70,98,.1); }

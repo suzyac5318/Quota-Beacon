@@ -30,6 +30,13 @@ export interface AccountLoginStatus {
   message: string | null;
 }
 
+export interface AccountWeeklyQuota {
+  profileId: string;
+  remainingPercent: number | null;
+  status: "ok" | "loading" | "stale" | "unavailable" | "signed_out";
+  message: string | null;
+}
+
 const mockVault: AccountVault = {
   profiles: [
     { id: "demo-personal", alias: "个人号", maskedEmail: "p***@example.com", isActive: true, credentialStatus: "ready" },
@@ -44,6 +51,15 @@ export async function getAccountVault(): Promise<AccountVault> {
   if (!isTauri()) return mockVault;
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<AccountVault>("get_account_vault");
+}
+
+export async function getAccountWeeklyQuotas(): Promise<AccountWeeklyQuota[]> {
+  if (!isTauri()) return [
+    { profileId: "demo-personal", remainingPercent: 68, status: "ok", message: null },
+    { profileId: "demo-work", remainingPercent: 42, status: "ok", message: null },
+  ];
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<AccountWeeklyQuota[]>("get_account_weekly_quotas");
 }
 
 export async function saveCurrentAccount(alias: string): Promise<AccountVault> {
@@ -146,11 +162,11 @@ export function accountCopy(language: Language) {
     title: "Codex accounts", close: "Close", saveCurrent: "Save current", alias: "Account name",
     add: "Add account", cancel: "Cancel login", current: "Current", switch: "Switch", rename: "Rename", remove: "Delete",
     empty: "Save the current Codex login before adding another account.", browser: "Complete the official Codex sign-in in your browser.",
-    switched: "Account switched. Quota is refreshing.", invalid: "Sign in again", localTokens: "Token totals remain cumulative for this Mac.",
+    switched: "Account switched. Quota is refreshing.", invalid: "Sign in again", weekly: "Week", quotaUnavailable: "Week --", localTokens: "Token totals remain cumulative for this Mac.",
   } : {
     title: "Codex 账号", close: "关闭", saveCurrent: "保存当前账号", alias: "账号名称",
     add: "添加账号", cancel: "取消登录", current: "当前使用", switch: "切换", rename: "重命名", remove: "删除",
     empty: "请先显式保存当前 Codex 登录，再添加其他账号。", browser: "请在浏览器中完成官方 Codex 登录。",
-    switched: "账号已切换，正在刷新额度。", invalid: "重新登录", localTokens: "Token 统计继续累计此 Mac 上的全部 Codex 会话。",
+    switched: "账号已切换，正在刷新额度。", invalid: "重新登录", weekly: "周", quotaUnavailable: "周 --", localTokens: "Token 统计继续累计此 Mac 上的全部 Codex 会话。",
   };
 }
