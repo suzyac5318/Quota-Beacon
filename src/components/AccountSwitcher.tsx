@@ -13,11 +13,13 @@ import {
   saveCurrentAccount,
   switchAccount,
   type AccountLoginStatus,
+  type AccountWindowTheme,
   type AccountWeeklyQuota,
   type AccountVault,
 } from "../lib/accounts";
 import { getPreferences, setAccountSwitcherExpanded } from "../lib/bridge";
 import { normalizeLanguage } from "../lib/i18n";
+import { quotaThemeStyle } from "../lib/quotaTheme";
 import type { Language } from "../types";
 
 export function AccountSwitcher() {
@@ -29,6 +31,7 @@ export function AccountSwitcher() {
   const [notice, setNotice] = useState<string | null>(null);
   const [addFormOpen, setAddFormOpen] = useState(false);
   const [weeklyQuotas, setWeeklyQuotas] = useState<Map<string, AccountWeeklyQuota>>(() => new Map());
+  const [windowTheme, setWindowTheme] = useState<AccountWindowTheme | null>(null);
   const aliasInputRef = useRef<HTMLInputElement>(null);
   const t = useMemo(() => accountCopy(language), [language]);
 
@@ -39,7 +42,8 @@ export function AccountSwitcher() {
     void listenAccountEvents({
       onVault: setVault,
       onSwitched: () => setNotice(t.switched),
-      onOpened: () => { setAddFormOpen(false); setAlias(""); },
+      onOpened: (theme) => { setWindowTheme(theme); setAddFormOpen(false); setAlias(""); },
+      onThemeChanged: setWindowTheme,
       onError: setNotice,
     }).then((value) => { cleanup = value; });
     return () => cleanup();
@@ -129,7 +133,11 @@ export function AccountSwitcher() {
   }, [addFormVisible, noticeVisible]);
 
   return (
-    <main className={`account-switcher${addFormVisible ? " account-switcher--expanded" : ""}`} aria-label={t.title}>
+    <main
+      className={`account-switcher${addFormVisible ? " account-switcher--expanded" : ""}${windowTheme?.percent == null ? " account-switcher--neutral" : ""}`}
+      style={windowTheme?.percent == null ? undefined : quotaThemeStyle(windowTheme.percent, windowTheme.colors)}
+      aria-label={t.title}
+    >
       <header className="account-switcher__header">
         <div><h1>{t.title}</h1><p>{t.localTokens}</p></div>
         <button type="button" onClick={toggleAddForm} disabled={login?.status === "running"} aria-label={t.add} title={t.add} aria-expanded={addFormVisible} aria-controls="account-add-form"><Plus /></button>

@@ -23,7 +23,7 @@ describe("Windows glass material", () => {
     const windows = tauriConfig.app.windows as TransparentWindowConfig[];
     expect(windows.map((window) => window.label)).toEqual(["widget", "palette", "palette-editor", "account-switcher"]);
     expect(windows.every((window) => window.transparent && window.backgroundColor === "#00000000")).toBe(true);
-    expect(windows.find((window) => window.label === "account-switcher")?.height).toBe(180);
+    expect(windows.find((window) => window.label === "account-switcher")?.height).toBe(190);
     expect(capabilities.windows).toContain("account-switcher");
   });
 
@@ -85,10 +85,11 @@ describe("Windows glass material", () => {
     expect(nativeApp).toContain("window_material::animate_palette_material(app.clone(), false)");
     expect(nativeApp).toContain("Duration::from_millis(250)");
     expect(nativeApp).toContain('[\"widget\", \"palette\", \"palette-editor\", \"account-switcher\"].contains(&window.label())');
-    expect(nativeApp).toContain('emit_to(\"account-switcher\", \"account-switcher-opened\", ())');
-    expect(nativeApp).toContain("LogicalSize::new(320.0, 180.0)");
+    expect(nativeApp).toContain('emit_to(\"account-switcher\", \"account-switcher-opened\", theme)');
+    expect(nativeApp).toContain('\"account-switcher-theme-changed\"');
+    expect(nativeApp).toContain("LogicalSize::new(320.0, 190.0)");
     expect(nativeApp).toContain('window.label() == \"account-switcher\" && matches!(event, WindowEvent::Resized(_))');
-    expect(frontendBridge).toContain("ACCOUNT_SWITCHER_COMPACT_HEIGHT = 180");
+    expect(frontendBridge).toContain("ACCOUNT_SWITCHER_COMPACT_HEIGHT = 190");
     expect(frontendBridge).toContain("ACCOUNT_SWITCHER_EXPANDED_HEIGHT = 240");
     expect(frontendBridge).toContain("ACCOUNT_SWITCHER_NOTICE_EXTRA_HEIGHT = 24");
     expect(frontendBridge).toContain("accountSwitcherResizeGeneration");
@@ -122,6 +123,10 @@ describe("Windows glass material", () => {
     expect(styles).toContain("grid-template-rows: auto minmax(0,1fr) auto auto; gap: 0;");
     expect(styles).toContain(".account-switcher__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 9px;");
     expect(styles).toContain(".account-switcher__form-shell--open { grid-template-rows: 1fr; margin-top: 9px;");
+    expect(styles).toContain("linear-gradient(var(--glass-control-tint");
+    expect(styles).toContain(".account-switcher--neutral { --glass-control-tint: rgba(237,243,248,.18); }");
+    expect(styles).toContain(".account-row--active { border-color: color-mix(in srgb, var(--card-base");
+    expect(styles).not.toContain("rgba(226,235,243,.84)");
   });
 
   it("draws one internal stroke for every glass card", () => {

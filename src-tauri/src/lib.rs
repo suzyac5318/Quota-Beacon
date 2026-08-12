@@ -691,16 +691,65 @@ fn position_account_window(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| format!("failed to position account window: {error}"))
 }
 
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountWindowTheme {
+    percent: Option<u8>,
+    colors: Vec<String>,
+}
+
+impl AccountWindowTheme {
+    fn normalized(mut self) -> Self {
+        self.percent = self.percent.map(|percent| percent.min(100));
+        if models::valid_palette_colors(&self.colors) {
+            self.colors = self
+                .colors
+                .into_iter()
+                .map(|color| color.to_ascii_lowercase())
+                .collect();
+        } else {
+            self.colors = WidgetPreferences::default().palette_colors;
+        }
+        self
+    }
+}
+
+fn account_window_theme_from_state(state: &AppState) -> AccountWindowTheme {
+    let colors = state
+        .preferences
+        .lock()
+        .map(|preferences| preferences.palette_colors.clone())
+        .unwrap_or_else(|_| WidgetPreferences::default().palette_colors);
+    let percent = state
+        .snapshot_cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.as_ref().cloned())
+        .and_then(|(_, snapshots)| {
+            snapshots
+                .into_iter()
+                .find(|snapshot| snapshot.provider == "codex")
+        })
+        .and_then(|snapshot| snapshot.short_window)
+        .map(|window| window.remaining_percent.round().clamp(0.0, 100.0) as u8);
+    AccountWindowTheme { percent, colors }
+}
+
 #[tauri::command]
-fn open_account_switcher(app: AppHandle, state: State<'_, AppState>) -> Result<account_vault::AccountVaultView, String> {
+fn open_account_switcher(
+    theme: AccountWindowTheme,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<account_vault::AccountVaultView, String> {
+    let theme = theme.normalized();
     finish_palette_preview(&app);
     let account = app
         .get_webview_window("account-switcher")
         .ok_or_else(|| "account window missing".to_string())?;
     account
-        .set_size(tauri::LogicalSize::new(320.0, 180.0))
+        .set_size(tauri::LogicalSize::new(320.0, 190.0))
         .map_err(|error| format!("failed to reset account window size: {error}"))?;
-    let _ = app.emit_to("account-switcher", "account-switcher-opened", ());
+    let _ = app.emit_to("account-switcher", "account-switcher-opened", theme);
     account.show().map_err(|error| format!("failed to show account window: {error}"))?;
     let _ = account.set_always_on_top(true);
     position_account_window(&app)?;
@@ -708,6 +757,15 @@ fn open_account_switcher(app: AppHandle, state: State<'_, AppState>) -> Result<a
     let view = publish_account_vault(&app, state.inner())?;
     let _ = account.set_focus();
     Ok(view)
+}
+
+#[tauri::command]
+fn update_account_switcher_theme(app: AppHandle, theme: AccountWindowTheme) {
+    let _ = app.emit_to(
+        "account-switcher",
+        "account-switcher-theme-changed",
+        theme.normalized(),
+    );
 }
 
 #[tauri::command]
@@ -954,7 +1012,8 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
             match id {
                 "account-manage" => {
                     if let Some(state) = app.try_state::<AppState>() {
-                        let _ = open_account_switcher(app.clone(), state);
+                        let theme = account_window_theme_from_state(state.inner());
+                        let _ = open_account_switcher(theme, app.clone(), state);
                     }
                 }
                 "show" => {
@@ -1174,6 +1233,7 @@ pub fn run() {
             poll_account_login,
             cancel_account_login,
             open_account_switcher,
+            update_account_switcher_theme,
             close_account_switcher
         ])
         .on_tray_icon_event(|app, event| {

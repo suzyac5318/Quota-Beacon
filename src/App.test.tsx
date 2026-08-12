@@ -41,6 +41,7 @@ vi.mock("./lib/accounts", () => ({
     return () => {};
   }),
   openAccountSwitcher: vi.fn(async () => ({ profiles: [], activeProfileId: null, hasCurrentLogin: true, currentLoginSaved: false })),
+  updateAccountSwitcherTheme: vi.fn(async () => {}),
 }));
 
 vi.mock("./lib/bridge", () => ({
@@ -128,6 +129,7 @@ describe("quota refresh coordination", () => {
     const accountButton = view.getByRole("button", { name: /CODEX/i });
     fireEvent.click(accountButton);
     await waitFor(() => expect(openAccountSwitcher).toHaveBeenCalledTimes(1));
+    expect(openAccountSwitcher).toHaveBeenCalledWith({ percent: 74, colors: preferences.paletteColors });
     fireEvent.click(accountButton);
     await waitFor(() => expect(closeAccountSwitcher).toHaveBeenCalledTimes(1));
     view.unmount();

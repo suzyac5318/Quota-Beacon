@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { QuotaCard } from "./components/QuotaCard";
-import { closeAccountSwitcher, getAccountVault, listenAccountEvents, openAccountSwitcher, type AccountVault } from "./lib/accounts";
+import { closeAccountSwitcher, getAccountVault, listenAccountEvents, openAccountSwitcher, updateAccountSwitcherTheme, type AccountVault, type AccountWindowTheme } from "./lib/accounts";
 import { closePalettePreview, fetchSnapshots, fetchTokenUsage, getPreferences, listenDesktopEvents, listenPalettePreview, openPalettePreview, setAlwaysOnTop, setWidgetClip, setWidgetExpanded, startDragging, syncWidgetCssScale, updatePreferences } from "./lib/bridge";
 import { clampPercent, getPrimaryQuota } from "./lib/format";
 import { copy, nextLanguage, normalizeLanguage } from "./lib/i18n";
@@ -308,6 +308,16 @@ export default function App() {
     return current;
   })();
   const activePaletteColors = paletteDraft ?? preferences.paletteColors;
+  const accountThemePercent = current?.shortWindow ? clampPercent(current.shortWindow.remainingPercent) : null;
+  const accountWindowTheme = useMemo<AccountWindowTheme>(() => ({
+    percent: accountThemePercent,
+    colors: [...activePaletteColors],
+  }), [accountThemePercent, activePaletteColors]);
+
+  useEffect(() => {
+    if (!accountActive.current) return;
+    void updateAccountSwitcherTheme(accountWindowTheme).catch(() => undefined);
+  }, [accountWindowTheme]);
 
   const savePreferences = useCallback((next: WidgetPreferences) => {
     const previous = preferences;
@@ -393,7 +403,7 @@ export default function App() {
     void setWidgetClip(true);
     setCompact(false);
     void setWidgetExpanded(true);
-    void openAccountSwitcher().then((vault) => {
+    void openAccountSwitcher(accountWindowTheme).then((vault) => {
       accountOpening.current = false;
       setAccountVault(vault);
       if (accountClosing.current) requestClose();
@@ -403,7 +413,7 @@ export default function App() {
       accountClosing.current = false;
       setOperationError("Unable to open account manager.");
     });
-  }, [clearWidgetMotionTimers]);
+  }, [accountWindowTheme, clearWidgetMotionTimers]);
 
   if (!displayed) return <div className="loading-card" aria-label={t.loadingQuota}><span /><span /><span /></div>;
 

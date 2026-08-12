@@ -9,7 +9,11 @@ const mocks = vi.hoisted(() => ({
   getAccountVault: vi.fn(),
   getAccountWeeklyQuotas: vi.fn(),
   setAccountSwitcherExpanded: vi.fn(async () => undefined),
-  accountHandlers: null as null | { onOpened?: () => void; onSwitched?: () => void },
+  accountHandlers: null as null | {
+    onOpened?: (theme: { percent: number | null; colors: string[] }) => void;
+    onThemeChanged?: (theme: { percent: number | null; colors: string[] }) => void;
+    onSwitched?: () => void;
+  },
 }));
 
 vi.mock("../lib/accounts", () => ({
@@ -23,7 +27,11 @@ vi.mock("../lib/accounts", () => ({
   beginAccountLogin: vi.fn(), cancelAccountLogin: vi.fn(), closeAccountSwitcher: vi.fn(), deleteAccount: vi.fn(),
   getAccountVault: mocks.getAccountVault,
   getAccountWeeklyQuotas: mocks.getAccountWeeklyQuotas,
-  listenAccountEvents: vi.fn(async (handlers: { onOpened?: () => void; onSwitched?: () => void }) => { mocks.accountHandlers = handlers; return () => {}; }), pollAccountLogin: vi.fn(), renameAccount: vi.fn(),
+  listenAccountEvents: vi.fn(async (handlers: {
+    onOpened?: (theme: { percent: number | null; colors: string[] }) => void;
+    onThemeChanged?: (theme: { percent: number | null; colors: string[] }) => void;
+    onSwitched?: () => void;
+  }) => { mocks.accountHandlers = handlers; return () => {}; }), pollAccountLogin: vi.fn(), renameAccount: vi.fn(),
   saveCurrentAccount: mocks.saveCurrentAccount.mockResolvedValue({
     profiles: [{ id: "personal", alias: "个人号", maskedEmail: "p***@example.com", isActive: true, credentialStatus: "ready" }],
     activeProfileId: "personal", hasCurrentLogin: true, currentLoginSaved: true,
@@ -81,11 +89,30 @@ describe("AccountSwitcher", () => {
     fireEvent.click(addButton);
     const aliasInput = view.getByLabelText("账号名称") as HTMLInputElement;
     fireEvent.change(aliasInput, { target: { value: "未提交" } });
-    act(() => mocks.accountHandlers?.onOpened?.());
+    act(() => mocks.accountHandlers?.onOpened?.({ percent: 60, colors: ["#eb5b58", "#f1a06f", "#f5d98f", "#e3f4b8", "#b9e4c9"] }));
     expect(addButton.getAttribute("aria-expanded")).toBe("false");
     expect(view.container.querySelector(".account-switcher__form-shell")?.getAttribute("aria-hidden")).toBe("true");
     expect(aliasInput.disabled).toBe(true);
     expect(aliasInput.value).toBe("");
+  });
+
+  it("uses the active five-hour quota theme and preserves neutral fallback", async () => {
+    const view = render(<AccountSwitcher />);
+    await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());
+    const shell = view.container.querySelector(".account-switcher") as HTMLElement;
+    expect(shell.classList.contains("account-switcher--neutral")).toBe(true);
+
+    act(() => mocks.accountHandlers?.onOpened?.({
+      percent: 60,
+      colors: ["#eb5b58", "#f1a06f", "#f5d98f", "#e3f4b8", "#b9e4c9"],
+    }));
+    expect(shell.classList.contains("account-switcher--neutral")).toBe(false);
+    expect(shell.style.getPropertyValue("--card-base")).toBe("#e3f4b8");
+    expect(shell.style.getPropertyValue("--glass-control-tint")).toContain("16%");
+
+    act(() => mocks.accountHandlers?.onThemeChanged?.({ percent: null, colors: [] }));
+    expect(shell.classList.contains("account-switcher--neutral")).toBe(true);
+    expect(shell.style.getPropertyValue("--card-base")).toBe("");
   });
 
   it("dismisses the switch notice after ten seconds without showing a restart button", async () => {
