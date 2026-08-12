@@ -46,6 +46,14 @@ export function AccountSwitcher() {
   }, [t.switched]);
 
   useEffect(() => {
+    if (notice !== t.switched) return;
+    const timer = window.setTimeout(() => {
+      setNotice((current) => current === t.switched ? null : current);
+    }, 10_000);
+    return () => window.clearTimeout(timer);
+  }, [notice, t.switched]);
+
+  useEffect(() => {
     let disposed = false;
     let inFlight = false;
     const refreshWeeklyQuotas = async () => {

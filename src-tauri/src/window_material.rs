@@ -76,6 +76,28 @@ const COLLAPSE_MORPH_DELAY_MS: u64 = 90;
 const COLLAPSE_MORPH_MS: u64 = 190;
 #[cfg(target_os = "windows")]
 const MORPH_FRAME_MS: u64 = 16;
+#[cfg(target_os = "windows")]
+const CONTROL_CLOSED_SCALE: f32 = 0.985;
+#[cfg(target_os = "windows")]
+const CONTROL_CLOSED_TRANSLATE_Y: f32 = -10.0;
+#[cfg(target_os = "windows")]
+const CONTROL_OPEN_FRAME_DELAY_MS: u64 = 32;
+#[cfg(target_os = "windows")]
+const PALETTE_OPEN_OPACITY_MS: u64 = 200;
+#[cfg(target_os = "windows")]
+const PALETTE_OPEN_TRANSFORM_MS: u64 = 280;
+#[cfg(target_os = "windows")]
+const EDITOR_OPEN_DELAY_MS: u64 = 60;
+#[cfg(target_os = "windows")]
+const PALETTE_CLOSE_DELAY_MS: u64 = 55;
+#[cfg(target_os = "windows")]
+const PALETTE_CLOSE_OPACITY_MS: u64 = 140;
+#[cfg(target_os = "windows")]
+const PALETTE_CLOSE_TRANSFORM_MS: u64 = 180;
+#[cfg(target_os = "windows")]
+const EDITOR_CLOSE_OPACITY_MS: u64 = 130;
+#[cfg(target_os = "windows")]
+const EDITOR_CLOSE_TRANSFORM_MS: u64 = 170;
 
 // Mirrors --morph-spring in src/styles.css. Keeping the native blur surface on
 // the card's existing curve prevents a second, visibly faster morph.
@@ -102,6 +124,16 @@ const MORPH_KEYFRAMES: [(f64, f64); 15] = [
 static CLIP_GENERATION: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_os = "windows")]
 static CLIP_PROGRESS: AtomicI32 = AtomicI32::new(0);
+#[cfg(target_os = "windows")]
+static PALETTE_MATERIAL_GENERATION: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "windows")]
+static PALETTE_TRANSFORM_PROGRESS: AtomicI32 = AtomicI32::new(0);
+#[cfg(target_os = "windows")]
+static PALETTE_OPACITY_PROGRESS: AtomicI32 = AtomicI32::new(0);
+#[cfg(target_os = "windows")]
+static EDITOR_TRANSFORM_PROGRESS: AtomicI32 = AtomicI32::new(0);
+#[cfg(target_os = "windows")]
+static EDITOR_OPACITY_PROGRESS: AtomicI32 = AtomicI32::new(0);
 #[cfg(target_os = "windows")]
 static WEBVIEW_SCALE_BITS: AtomicU32 = AtomicU32::new(0);
 #[cfg(target_os = "windows")]
@@ -207,6 +239,8 @@ struct BlurWindow {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BlurWindowKind {
     Widget,
+    Palette,
+    PaletteEditor,
     Control,
 }
 
@@ -480,15 +514,79 @@ fn widget_geometry(parent: RECT, scale: f32, progress: f32) -> SurfaceGeometry {
 }
 
 #[cfg(target_os = "windows")]
-fn control_geometry(parent: RECT, scale: f32) -> SurfaceGeometry {
+fn control_geometry(parent: RECT, scale: f32, progress: f32) -> SurfaceGeometry {
+    let progress = progress.clamp(0.0, 1.0);
+    let parent_width = parent.right - parent.left;
+    let parent_height = parent.bottom - parent.top;
+    let shell_scale = CONTROL_CLOSED_SCALE + (1.0 - CONTROL_CLOSED_SCALE) * progress;
+    let transformed_width = parent_width as f32 * shell_scale;
+    let transformed_height = parent_height as f32 * shell_scale;
+    let translate_y = CONTROL_CLOSED_TRANSLATE_Y * scale * (1.0 - progress);
+    let outer_x = ((parent_width as f32 - transformed_width) / 2.0)
+        .round()
+        .max(0.0) as i32;
+    // The WebView clips the translated shell at the transparent window edge.
+    // Matching that visible bound prevents the separate native blur HWND from
+    // appearing before the CSS shell or lingering outside it while closing.
+    let outer_y = translate_y.max(0.0).round() as i32;
+    let visible_bottom = (translate_y + transformed_height)
+        .min(parent_height as f32)
+        .max(1.0);
+    let outer_width = transformed_width.floor().max(1.0) as i32;
+    let outer_height = (visible_bottom - outer_y as f32).floor().max(1.0) as i32;
     let edge_inset = (BLUR_EDGE_INSET * scale).ceil().max(1.0) as i32;
     SurfaceGeometry {
-        x: edge_inset,
-        y: edge_inset,
-        width: (parent.right - parent.left - edge_inset * 2).max(1),
-        height: (parent.bottom - parent.top - edge_inset * 2).max(1),
-        radius: ((CONTROL_RADIUS - BLUR_EDGE_INSET) * scale).max(0.0),
+        x: outer_x + edge_inset,
+        y: outer_y + edge_inset,
+        width: (outer_width.min(parent_width - outer_x) - edge_inset * 2).max(1),
+        height: (outer_height.min(parent_height - outer_y) - edge_inset * 2).max(1),
+        radius: ((CONTROL_RADIUS * shell_scale - BLUR_EDGE_INSET) * scale).max(0.0),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn cubic_bezier_value(linear: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+    let linear = linear.clamp(0.0, 1.0);
+    if linear <= f64::EPSILON {
+        return 0.0;
+    }
+    if 1.0 - linear <= f64::EPSILON {
+        return 1.0;
+    }
+    let sample = |time: f64, first: f64, second: f64| {
+        let inverse = 1.0 - time;
+        3.0 * inverse * inverse * time * first
+            + 3.0 * inverse * time * time * second
+            + time * time * time
+    };
+    let mut lower = 0.0;
+    let mut upper = 1.0;
+    for _ in 0..14 {
+        let time = (lower + upper) / 2.0;
+        if sample(time, x1, x2) < linear {
+            lower = time;
+        } else {
+            upper = time;
+        }
+    }
+    sample((lower + upper) / 2.0, y1, y2)
+}
+
+#[cfg(target_os = "windows")]
+fn transition_progress(
+    elapsed_ms: f64,
+    start: f64,
+    target: f64,
+    delay_ms: u64,
+    duration_ms: u64,
+    curve: (f64, f64, f64, f64),
+) -> f64 {
+    if elapsed_ms <= delay_ms as f64 {
+        return start;
+    }
+    let linear = ((elapsed_ms - delay_ms as f64) / duration_ms as f64).clamp(0.0, 1.0);
+    let eased = cubic_bezier_value(linear, curve.0, curve.1, curve.2, curve.3);
+    start + (target - start) * eased
 }
 
 #[cfg(target_os = "windows")]
@@ -517,12 +615,22 @@ fn sync_blur_window(window: &BlurWindow, app: &AppHandle) -> Result<(), String> 
         return Err("GetWindowRect failed".to_string());
     }
     let scale = active_window_scale(app, window.label);
-    let geometry = match window.kind {
+    let (geometry, opacity) = match window.kind {
         BlurWindowKind::Widget => {
             let progress = CLIP_PROGRESS.load(Ordering::SeqCst) as f32 / 1000.0;
-            widget_geometry(parent_rect, scale, progress)
+            (widget_geometry(parent_rect, scale, progress), 1.0)
         }
-        BlurWindowKind::Control => control_geometry(parent_rect, scale),
+        BlurWindowKind::Palette => {
+            let progress = PALETTE_TRANSFORM_PROGRESS.load(Ordering::SeqCst) as f32 / 1000.0;
+            let opacity = PALETTE_OPACITY_PROGRESS.load(Ordering::SeqCst) as f32 / 1000.0;
+            (control_geometry(parent_rect, scale, progress), opacity)
+        }
+        BlurWindowKind::PaletteEditor => {
+            let progress = EDITOR_TRANSFORM_PROGRESS.load(Ordering::SeqCst) as f32 / 1000.0;
+            let opacity = EDITOR_OPACITY_PROGRESS.load(Ordering::SeqCst) as f32 / 1000.0;
+            (control_geometry(parent_rect, scale, progress), opacity)
+        }
+        BlurWindowKind::Control => (control_geometry(parent_rect, scale, 1.0), 1.0),
     };
     let size = Vector2 {
         X: geometry.width as f32,
@@ -532,6 +640,11 @@ fn sync_blur_window(window: &BlurWindow, app: &AppHandle) -> Result<(), String> 
         X: geometry.radius,
         Y: geometry.radius,
     };
+    window
+        .composition
+        .sprite
+        .SetOpacity(opacity.clamp(0.0, 1.0))
+        .map_err(|error| format!("set blur opacity: {error}"))?;
     window
         .composition
         .sprite
@@ -703,6 +816,117 @@ pub fn animate_widget_region(app: AppHandle, expanded: bool) {
 }
 
 #[cfg(target_os = "windows")]
+pub fn reset_palette_material() {
+    PALETTE_MATERIAL_GENERATION.fetch_add(1, Ordering::SeqCst);
+    PALETTE_TRANSFORM_PROGRESS.store(0, Ordering::SeqCst);
+    PALETTE_OPACITY_PROGRESS.store(0, Ordering::SeqCst);
+    EDITOR_TRANSFORM_PROGRESS.store(0, Ordering::SeqCst);
+    EDITOR_OPACITY_PROGRESS.store(0, Ordering::SeqCst);
+}
+
+#[cfg(target_os = "windows")]
+pub fn animate_palette_material(app: AppHandle, opening: bool) {
+    let generation = PALETTE_MATERIAL_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let palette_transform_start = PALETTE_TRANSFORM_PROGRESS.load(Ordering::SeqCst) as f64 / 1000.0;
+    let palette_opacity_start = PALETTE_OPACITY_PROGRESS.load(Ordering::SeqCst) as f64 / 1000.0;
+    let editor_transform_start = EDITOR_TRANSFORM_PROGRESS.load(Ordering::SeqCst) as f64 / 1000.0;
+    let editor_opacity_start = EDITOR_OPACITY_PROGRESS.load(Ordering::SeqCst) as f64 / 1000.0;
+    let target = if opening { 1.0 } else { 0.0 };
+
+    tauri::async_runtime::spawn(async move {
+        let started = tokio::time::Instant::now();
+        let transform_curve = (0.2, 0.82, 0.2, 1.08);
+        let opacity_curve = (0.25, 0.1, 0.25, 1.0);
+        let (
+            palette_delay,
+            editor_delay,
+            palette_opacity_ms,
+            palette_transform_ms,
+            editor_opacity_ms,
+            editor_transform_ms,
+        ) = if opening {
+            (
+                CONTROL_OPEN_FRAME_DELAY_MS,
+                CONTROL_OPEN_FRAME_DELAY_MS + EDITOR_OPEN_DELAY_MS,
+                PALETTE_OPEN_OPACITY_MS,
+                PALETTE_OPEN_TRANSFORM_MS,
+                PALETTE_OPEN_OPACITY_MS,
+                PALETTE_OPEN_TRANSFORM_MS,
+            )
+        } else {
+            (
+                PALETTE_CLOSE_DELAY_MS,
+                0,
+                PALETTE_CLOSE_OPACITY_MS,
+                PALETTE_CLOSE_TRANSFORM_MS,
+                EDITOR_CLOSE_OPACITY_MS,
+                EDITOR_CLOSE_TRANSFORM_MS,
+            )
+        };
+        let total_ms =
+            (palette_delay + palette_transform_ms).max(editor_delay + editor_transform_ms);
+
+        loop {
+            if PALETTE_MATERIAL_GENERATION.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let palette_transform = transition_progress(
+                elapsed_ms,
+                palette_transform_start,
+                target,
+                palette_delay,
+                palette_transform_ms,
+                transform_curve,
+            );
+            let palette_opacity = transition_progress(
+                elapsed_ms,
+                palette_opacity_start,
+                target,
+                palette_delay,
+                palette_opacity_ms,
+                opacity_curve,
+            );
+            let editor_transform = transition_progress(
+                elapsed_ms,
+                editor_transform_start,
+                target,
+                editor_delay,
+                editor_transform_ms,
+                transform_curve,
+            );
+            let editor_opacity = transition_progress(
+                elapsed_ms,
+                editor_opacity_start,
+                target,
+                editor_delay,
+                editor_opacity_ms,
+                opacity_curve,
+            );
+            PALETTE_TRANSFORM_PROGRESS.store(
+                (palette_transform * 1000.0).round() as i32,
+                Ordering::SeqCst,
+            );
+            PALETTE_OPACITY_PROGRESS
+                .store((palette_opacity * 1000.0).round() as i32, Ordering::SeqCst);
+            EDITOR_TRANSFORM_PROGRESS
+                .store((editor_transform * 1000.0).round() as i32, Ordering::SeqCst);
+            EDITOR_OPACITY_PROGRESS
+                .store((editor_opacity * 1000.0).round() as i32, Ordering::SeqCst);
+
+            if let Some(window) = app.get_webview_window("palette") {
+                let sync_app = app.clone();
+                let _ = window.run_on_main_thread(move || sync_window_material(&sync_app));
+            }
+            if elapsed_ms >= total_ms as f64 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(MORPH_FRAME_MS)).await;
+        }
+    });
+}
+
+#[cfg(target_os = "windows")]
 pub fn apply_window_materials(app: &AppHandle) {
     let Some(widget) = app.get_webview_window("widget") else {
         eprintln!("light blur skipped: widget window missing");
@@ -720,8 +944,8 @@ pub fn apply_window_materials(app: &AppHandle) {
     };
     for (label, kind) in [
         ("widget", BlurWindowKind::Widget),
-        ("palette", BlurWindowKind::Control),
-        ("palette-editor", BlurWindowKind::Control),
+        ("palette", BlurWindowKind::Palette),
+        ("palette-editor", BlurWindowKind::PaletteEditor),
         ("account-switcher", BlurWindowKind::Control),
     ] {
         if slot.iter().any(|window| window.label == label) {
@@ -818,7 +1042,7 @@ mod tests {
     #[test]
     fn control_blur_stays_inside_internal_stroke() {
         assert_eq!(
-            control_geometry(rect(512, 166), 1.6),
+            control_geometry(rect(512, 166), 1.6, 1.0),
             SurfaceGeometry {
                 x: 2,
                 y: 2,
@@ -827,6 +1051,27 @@ mod tests {
                 radius: 36.8,
             }
         );
+    }
+
+    #[test]
+    fn closed_palette_blur_matches_the_transformed_css_shell() {
+        assert_eq!(
+            control_geometry(rect(512, 166), 1.6, 0.0),
+            SurfaceGeometry {
+                x: 6,
+                y: 2,
+                width: 500,
+                height: 143,
+                radius: 36.224,
+            }
+        );
+    }
+
+    #[test]
+    fn control_transition_curves_keep_exact_endpoints() {
+        let curve = (0.2, 0.82, 0.2, 1.08);
+        assert!((transition_progress(0.0, 0.0, 1.0, 32, 280, curve) - 0.0).abs() < 0.000_001);
+        assert!((transition_progress(312.0, 0.0, 1.0, 32, 280, curve) - 1.0).abs() < 0.000_001);
     }
 
     #[test]
@@ -894,6 +1139,12 @@ pub fn hide_window_material() {}
 
 #[cfg(not(target_os = "windows"))]
 pub fn animate_widget_region(_app: AppHandle, _expanded: bool) {}
+
+#[cfg(not(target_os = "windows"))]
+pub fn reset_palette_material() {}
+
+#[cfg(not(target_os = "windows"))]
+pub fn animate_palette_material(_app: AppHandle, _opening: bool) {}
 
 #[cfg(not(target_os = "windows"))]
 pub fn destroy_window_materials() {}

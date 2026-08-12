@@ -51,9 +51,13 @@ describe("Windows glass material", () => {
     expect(nativeMaterial).toContain("compact_surface_tracks_webview_pixel_scale_without_corner_overhang");
     expect(nativeMaterial).toContain("WEBVIEW_SCALE_BITS");
     expect(nativeMaterial).toContain("BLUR_WINDOWS");
-    expect(nativeMaterial).toContain('(\"palette\", BlurWindowKind::Control)');
-    expect(nativeMaterial).toContain('(\"palette-editor\", BlurWindowKind::Control)');
+    expect(nativeMaterial).toContain('(\"palette\", BlurWindowKind::Palette)');
+    expect(nativeMaterial).toContain('(\"palette-editor\", BlurWindowKind::PaletteEditor)');
     expect(nativeMaterial).toContain('(\"account-switcher\", BlurWindowKind::Control)');
+    expect(nativeMaterial).toContain("animate_palette_material");
+    expect(nativeMaterial).toContain("PALETTE_CLOSE_DELAY_MS: u64 = 55");
+    expect(nativeMaterial).toContain("EDITOR_OPEN_DELAY_MS: u64 = 60");
+    expect(nativeMaterial).toContain("SetOpacity");
     expect(nativeMaterial).toContain("EXPAND_MORPH_MS: u64 = 400");
     expect(nativeMaterial).toContain("COLLAPSE_MORPH_DELAY_MS: u64 = 90");
     expect(nativeMaterial).toContain("COLLAPSE_MORPH_MS: u64 = 190");
@@ -77,6 +81,9 @@ describe("Windows glass material", () => {
     expect(frontendBridge).not.toContain("getCurrentWindow().outerSize()");
     expect(frontendBridge).toContain("physicalSize.width / cssViewportWidth");
     expect(nativeApp).toContain('position_palette_windows(&app)?;\n    window_material::sync_window_material(&app);');
+    expect(nativeApp).toContain("window_material::animate_palette_material(app.clone(), true)");
+    expect(nativeApp).toContain("window_material::animate_palette_material(app.clone(), false)");
+    expect(nativeApp).toContain("Duration::from_millis(250)");
     expect(nativeApp).toContain('[\"widget\", \"palette\", \"palette-editor\", \"account-switcher\"].contains(&window.label())');
     expect(nativeApp).toContain('emit_to(\"account-switcher\", \"account-switcher-opened\", ())');
     expect(nativeApp).toContain("LogicalSize::new(320.0, 180.0)");

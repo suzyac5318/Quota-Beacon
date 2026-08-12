@@ -734,6 +734,7 @@ fn open_palette_preview(
         }
     }
     state.palette_generation.fetch_add(1, Ordering::SeqCst);
+    window_material::reset_palette_material();
     let palette = app
         .get_webview_window("palette")
         .ok_or_else(|| "palette window missing".to_string())?;
@@ -764,6 +765,7 @@ fn open_palette_preview(
         .map_err(|error| format!("failed to initialize palette preview: {error}"))?;
     app.emit_to("palette-editor", "palette-preview-opened", payload)
         .map_err(|error| format!("failed to initialize palette editor: {error}"))?;
+    window_material::animate_palette_material(app.clone(), true);
     let _ = palette.set_focus();
     Ok(())
 }
@@ -772,6 +774,7 @@ fn finish_palette_preview(app: &AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         state.palette_generation.fetch_add(1, Ordering::SeqCst);
     }
+    window_material::reset_palette_material();
     if let Some(palette) = app.get_webview_window("palette") {
         let _ = palette.hide();
     }
@@ -841,8 +844,9 @@ fn close_palette_preview(app: AppHandle, state: State<'_, AppState>) -> Result<(
     let generation = state.palette_generation.fetch_add(1, Ordering::SeqCst) + 1;
     let _ = app.emit_to("palette", "palette-preview-closing", ());
     let _ = app.emit_to("palette-editor", "palette-preview-closing", ());
+    window_material::animate_palette_material(app.clone(), false);
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(220)).await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
         let should_finish = app
             .try_state::<AppState>()
             .map(|state| state.palette_generation.load(Ordering::SeqCst) == generation)

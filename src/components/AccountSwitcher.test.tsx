@@ -88,7 +88,7 @@ describe("AccountSwitcher", () => {
     expect(aliasInput.value).toBe("");
   });
 
-  it("reserves native window space for switch notices without showing a restart button", async () => {
+  it("dismisses the switch notice after ten seconds without showing a restart button", async () => {
     mocks.getAccountVault.mockResolvedValue({
       profiles: [
         { id: "personal", alias: "个人号", maskedEmail: "p***@example.com", isActive: true, credentialStatus: "ready" },
@@ -99,11 +99,18 @@ describe("AccountSwitcher", () => {
     const view = render(<AccountSwitcher />);
     await waitFor(() => expect(view.getByRole("button", { name: "切换" })).not.toBeNull());
     expect(view.queryByRole("button", { name: "切换并重启" })).toBeNull();
+    const timeoutSpy = vi.spyOn(window, "setTimeout");
 
     act(() => mocks.accountHandlers?.onSwitched?.());
 
     await waitFor(() => expect(view.getByRole("status").textContent).toContain("重启 Codex 后完整生效"));
     await waitFor(() => expect(mocks.setAccountSwitcherExpanded).toHaveBeenLastCalledWith(false, false, true));
+    const dismissCall = timeoutSpy.mock.calls.find(([, delay]) => delay === 10_000);
+    expect(dismissCall).toBeDefined();
+    act(() => (dismissCall?.[0] as () => void)());
+    expect(view.queryByText(/重启 Codex 后完整生效/)).toBeNull();
+    await waitFor(() => expect(mocks.setAccountSwitcherExpanded).toHaveBeenLastCalledWith(false, false, false));
+    timeoutSpy.mockRestore();
   });
 
   it("shows only the rounded weekly quota for each saved account", async () => {
