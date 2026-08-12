@@ -8,6 +8,7 @@ import versionFile from "../VERSION?raw";
 import ciWorkflow from "../.github/workflows/ci.yml?raw";
 import releaseWorkflow from "../.github/workflows/release.yml?raw";
 import bundleVerifier from "../.github/scripts/verify-macos-bundle.sh?raw";
+import accountVaultSource from "../src-tauri/src/account_vault.rs?raw";
 
 type TransparentWindowConfig = {
   label: string;
@@ -30,6 +31,7 @@ describe("macOS transparent windows", () => {
       "widget",
       "palette",
       "palette-editor",
+      "account-switcher",
     ]);
     expect(transparentWindows.every((window) => window.backgroundColor === "#00000000")).toBe(true);
   });
@@ -48,6 +50,15 @@ describe("macOS version isolation", () => {
     expect(tauriConfig.version).toBe(packageJson.version);
     expect(cargoVersion).toBe(packageJson.version);
     expect(cargoLockVersion).toBe(packageJson.version);
+  });
+});
+
+describe("macOS account credential isolation", () => {
+  it("uses Security.framework and a stable app-scoped Keychain service", () => {
+    expect(cargoManifest).toContain("[target.'cfg(target_os = \"macos\")'.dependencies]");
+    expect(cargoManifest).toContain('security-framework = "3.7"');
+    expect(accountVaultSource).toContain('KEYCHAIN_SERVICE: &str = "app.quotabeacon.desktop.accounts"');
+    expect(accountVaultSource).not.toContain("dpapi");
   });
 });
 

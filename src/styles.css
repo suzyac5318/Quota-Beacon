@@ -307,6 +307,50 @@ button { font: inherit; }
 .quota-card--stale .orb-unavailable { color: #8f9094; }
 .quota-card--signed_out .orb-unavailable { color: #5f6f95; }
 
+.account-chip { width: 82px; min-width: 0; max-width: 82px; height: 27px; flex: 0 0 82px; display: inline-flex; align-items: center; gap: 5px; margin-left: auto; padding: 0 9px; border: 1px solid rgba(255,255,255,.5); border-radius: 999px; color: rgba(20,25,33,.78); background: rgba(255,255,255,.28); box-shadow: inset 0 1px 0 rgba(255,255,255,.44); cursor: pointer; backdrop-filter: blur(12px); }
+.account-chip:hover, .account-chip--active { background: rgba(255,255,255,.54); }
+.account-chip:focus-visible { outline: 2px solid rgba(30,78,140,.72); outline-offset: 2px; }
+.account-chip svg { width: 14px; height: 14px; flex: none; }
+.account-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 700; }
+
+.account-switcher { width: 100%; height: 100%; display: flex; flex-direction: column; gap: 8px; padding: 14px; overflow: hidden; border: 1px solid rgba(255,255,255,.58); border-radius: 24px; color: #17191f; background: rgba(235,240,247,.72); box-shadow: inset 0 1px 0 rgba(255,255,255,.62), 0 18px 44px rgba(34,45,64,.18); backdrop-filter: blur(22px) saturate(1.24); -webkit-backdrop-filter: blur(22px) saturate(1.24); }
+.account-switcher button, .account-switcher input { font: inherit; }
+.account-switcher button { border: 1px solid rgba(52,73,104,.13); color: #293343; background: rgba(255,255,255,.5); cursor: pointer; }
+.account-switcher button:hover:not(:disabled) { background: rgba(255,255,255,.82); }
+.account-switcher button:focus-visible, .account-switcher input:focus-visible { outline: 2px solid rgba(41,91,156,.72); outline-offset: 1px; }
+.account-switcher button:disabled { opacity: .42; cursor: default; }
+.account-switcher__header { min-height: 34px; display: flex; align-items: center; justify-content: space-between; }
+.account-switcher__header > div:first-child { display: grid; gap: 1px; }
+.account-switcher__header strong { font-size: 14px; }
+.account-switcher__header small { color: #667184; font-size: 9px; }
+.account-switcher__header-actions { display: flex; gap: 5px; }
+.account-switcher__header-actions button, .account-icon-button { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border-radius: 9px; }
+.account-switcher__header-actions svg, .account-icon-button svg { width: 14px; height: 14px; }
+.account-switcher__notice { margin: 0; padding: 5px 8px; border-radius: 8px; color: #40526c; background: rgba(255,255,255,.5); font-size: 10px; line-height: 1.35; }
+.account-list { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; overflow-y: auto; scrollbar-width: none; }
+.account-list::-webkit-scrollbar { display: none; }
+.account-list__empty { margin: auto; max-width: 25ch; color: #677285; text-align: center; font-size: 11px; line-height: 1.45; }
+.account-row { display: grid; grid-template-columns: 22px minmax(0,1fr) auto repeat(3,28px); align-items: center; gap: 4px; min-height: 44px; padding: 5px 6px; border: 1px solid rgba(55,75,104,.09); border-radius: 12px; background: rgba(255,255,255,.34); }
+.account-row--active { background: rgba(214,235,224,.62); }
+.account-row__state { display: grid; place-items: center; color: #527561; }
+.account-row__state svg { width: 16px; height: 16px; }
+.account-row__identity { min-width: 0; display: grid; }
+.account-row__identity strong, .account-row__identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-row__identity strong { font-size: 11px; }
+.account-row__identity small { color: #697587; font-size: 9px; }
+.account-row__current { padding: 3px 7px; border-radius: 999px; color: #3f7056; background: rgba(255,255,255,.5); font-size: 9px; font-weight: 700; }
+.account-row__switch { min-height: 27px; padding: 0 8px; border-radius: 8px; font-size: 10px; }
+.account-add { display: grid; gap: 6px; padding-top: 7px; border-top: 1px solid rgba(54,70,98,.1); }
+.account-add label { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 7px; color: #5b687b; font-size: 10px; }
+.account-add input { min-width: 0; height: 29px; padding: 0 9px; border: 1px solid rgba(52,73,104,.16); border-radius: 8px; color: #1f2936; background: rgba(255,255,255,.64); }
+.account-add > div { display: flex; justify-content: flex-end; gap: 5px; }
+.account-add button { min-height: 27px; padding: 0 9px; border-radius: 8px; font-size: 10px; }
+.account-switcher footer { color: #748093; text-align: center; font-size: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .account-chip, .account-switcher, .account-row { transition: none; animation: none; }
+}
+
 .design-workbench { width: 100vw; min-height: 100vh; display: grid; grid-template-columns: minmax(480px, 1fr) 390px; color: #17191f; background: #f3f4f6; overflow: auto; }
 .screenshot-stage { width: 100vw; height: 100vh; display: grid; place-content: center; background: #f6f7fb; overflow: hidden; }
 .screenshot-stage--states { grid-template-columns: repeat(3, 320px); gap: 28px; align-content: center; justify-content: center; }

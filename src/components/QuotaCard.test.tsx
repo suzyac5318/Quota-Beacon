@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshot, WidgetPreferences } from "../types";
 import { QuotaCard } from "./QuotaCard";
@@ -54,5 +54,25 @@ describe("QuotaCard content layers", () => {
     expect(view.container.querySelector(".collapsed-content")).toBe(collapsed);
     expect(view.container.querySelector(".expanded-content")).toBe(expanded);
     expect(view.container.querySelector(".quota-card--compact")).toBeNull();
+  });
+
+  it("exposes the active account through the account capsule", () => {
+    const onAccounts = vi.fn();
+    const view = render(<QuotaCard
+      snapshot={snapshot}
+      preferences={preferences}
+      providerCount={1}
+      onPrevious={vi.fn()}
+      onNext={vi.fn()}
+      onTogglePin={vi.fn()}
+      onLock={vi.fn()}
+      onLanguage={vi.fn()}
+      onDrag={vi.fn()}
+      onHover={vi.fn()}
+      onAccounts={onAccounts}
+      accountVault={{ profiles: [{ id: "one", alias: "个人号", maskedEmail: "p***@example.com", isActive: true, credentialStatus: "ready" }], activeProfileId: "one", hasCurrentLogin: true, currentLoginSaved: true }}
+    />);
+    fireEvent.click(view.getByRole("button", { name: "Codex 账号：个人号" }));
+    expect(onAccounts).toHaveBeenCalledOnce();
   });
 });

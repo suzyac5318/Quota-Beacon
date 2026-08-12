@@ -1,3 +1,4 @@
+mod account_vault;
 mod codex;
 mod codex_overlay;
 mod models;
@@ -6,7 +7,8 @@ mod token_usage;
 use std::{
     fs,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -16,7 +18,7 @@ use std::{
 
 use models::{ProviderSnapshot, TokenUsageSummary, WidgetPreferences};
 use tauri::{
-    menu::{CheckMenuItem, Menu, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, State, WindowEvent,
 };
@@ -29,17 +31,57 @@ struct AppState {
     preferences_path: PathBuf,
     fetch_lock: tokio::sync::Mutex<()>,
     snapshot_cache: Mutex<Option<(Instant, Vec<ProviderSnapshot>)>>,
+    account_generation: AtomicU64,
     token_usage_cache: Arc<Mutex<token_usage::TokenUsageCache>>,
     palette_generation: AtomicU64,
+    account_vault: Mutex<account_vault::AccountVault>,
+    account_switch_lock: tokio::sync::Mutex<()>,
+    account_login_task: Mutex<Option<AccountLoginTask>>,
+    account_login_root: PathBuf,
+}
+
+struct AccountLoginTask {
+    id: String,
+    alias: String,
+    replace_profile_id: Option<String>,
+    task_root: PathBuf,
+    child: Child,
+    started_at: Instant,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountLoginStatus {
+    task_id: String,
+    status: &'static str,
+    message: Option<String>,
+}
+
+async fn fetch_current_account_snapshots(state: &AppState) -> Vec<ProviderSnapshot> {
+    for _ in 0..3 {
+        let generation = state.account_generation.load(Ordering::SeqCst);
+        let values = vec![codex::fetch_snapshot(&state.client).await];
+        if !account_response_is_current(generation, &state.account_generation) {
+            continue;
+        }
+        if let Ok(mut cache) = state.snapshot_cache.lock() {
+            *cache = Some((Instant::now(), values.clone()));
+        }
+        return values;
+    }
+    vec![ProviderSnapshot::failure(
+        "unavailable",
+        "Account changed repeatedly while quota was refreshing.",
+    )]
+}
+
+fn account_response_is_current(generation: u64, current: &AtomicU64) -> bool {
+    generation == current.load(Ordering::SeqCst)
 }
 
 async fn fetch_snapshots_uncached(state: &State<'_, AppState>) -> Vec<ProviderSnapshot> {
     let _guard = state.fetch_lock.lock().await;
-    let values = vec![codex::fetch_snapshot(&state.client).await];
-    if let Ok(mut cache) = state.snapshot_cache.lock() {
-        *cache = Some((Instant::now(), values.clone()));
-    }
-    values
+    fetch_current_account_snapshots(state.inner()).await
 }
 
 fn load_preferences(path: &PathBuf) -> WidgetPreferences {
@@ -61,10 +103,11 @@ fn load_preferences(path: &PathBuf) -> WidgetPreferences {
 
 fn persist_preferences(path: &PathBuf, value: &WidgetPreferences) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|_| "failed to create settings directory".to_string())?;
+        fs::create_dir_all(parent)
+            .map_err(|_| "failed to create settings directory".to_string())?;
     }
-    let serialized = serde_json::to_vec_pretty(value)
-        .map_err(|_| "failed to serialize settings".to_string())?;
+    let serialized =
+        serde_json::to_vec_pretty(value).map_err(|_| "failed to serialize settings".to_string())?;
     let temporary = path.with_extension("json.tmp");
     let backup = path.with_extension("json.bak");
     let mut file = fs::File::create(&temporary)
@@ -114,11 +157,7 @@ async fn get_snapshots(state: State<'_, AppState>) -> Result<Vec<ProviderSnapsho
             }
         }
     }
-    let values = vec![codex::fetch_snapshot(&state.client).await];
-    if let Ok(mut cache) = state.snapshot_cache.lock() {
-        *cache = Some((Instant::now(), values.clone()));
-    }
-    Ok(values)
+    Ok(fetch_current_account_snapshots(state.inner()).await)
 }
 
 #[tauri::command]
@@ -391,101 +430,612 @@ fn set_widget_always_on_top(
     Ok(next)
 }
 
-fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show / Hide", true, None::<&str>)?;
-    let refresh = MenuItem::with_id(app, "refresh", "Refresh now", true, None::<&str>)?;
-    let unlock = MenuItem::with_id(app, "unlock", "Unlock widget", true, None::<&str>)?;
-    let pin = MenuItem::with_id(app, "pin", "Pin / Unpin Codex", true, None::<&str>)?;
-    let language = MenuItem::with_id(app, "language", "Switch Language / 切换语言", true, None::<&str>)?;
+fn publish_account_vault(
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<account_vault::AccountVaultView, String> {
+    let view = state
+        .account_vault
+        .lock()
+        .map_err(|_| "Account storage is busy.".to_string())?
+        .view()?;
+    let _ = app.emit_to("widget", "account-vault-changed", view.clone());
+    let _ = app.emit_to("account-switcher", "account-vault-changed", view.clone());
+    let _ = refresh_tray_menu(app);
+    Ok(view)
+}
+
+#[tauri::command]
+fn get_account_vault(
+    state: State<'_, AppState>,
+) -> Result<account_vault::AccountVaultView, String> {
+    state
+        .account_vault
+        .lock()
+        .map_err(|_| "Account storage is busy.".to_string())?
+        .view()
+}
+
+#[tauri::command]
+fn save_current_account(
+    alias: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<account_vault::AccountVaultView, String> {
+    let view = state
+        .account_vault
+        .lock()
+        .map_err(|_| "Account storage is busy.".to_string())?
+        .save_current(&alias)?;
+    let _ = app.emit_to("widget", "account-vault-changed", view.clone());
+    let _ = app.emit_to("account-switcher", "account-vault-changed", view.clone());
+    let _ = refresh_tray_menu(&app);
+    Ok(view)
+}
+
+#[tauri::command]
+fn rename_account(
+    profile_id: String,
+    alias: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<account_vault::AccountVaultView, String> {
+    let view = state
+        .account_vault
+        .lock()
+        .map_err(|_| "Account storage is busy.".to_string())?
+        .rename(&profile_id, &alias)?;
+    let _ = app.emit_to("widget", "account-vault-changed", view.clone());
+    let _ = app.emit_to("account-switcher", "account-vault-changed", view.clone());
+    let _ = refresh_tray_menu(&app);
+    Ok(view)
+}
+
+#[tauri::command]
+fn delete_account(
+    profile_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<account_vault::AccountVaultView, String> {
+    let view = state
+        .account_vault
+        .lock()
+        .map_err(|_| "Account storage is busy.".to_string())?
+        .delete(&profile_id)?;
+    let _ = app.emit_to("widget", "account-vault-changed", view.clone());
+    let _ = app.emit_to("account-switcher", "account-vault-changed", view.clone());
+    let _ = refresh_tray_menu(&app);
+    Ok(view)
+}
+
+async fn switch_account_internal(
+    profile_id: &str,
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<account_vault::SwitchOutcome, String> {
+    let _guard = state
+        .account_switch_lock
+        .try_lock()
+        .map_err(|_| "Another account switch is already running.".to_string())?;
+    let outcome = state
+        .account_vault
+        .lock()
+        .map_err(|_| "Account storage is busy.".to_string())?
+        .switch_to(profile_id)?;
+    state.account_generation.fetch_add(1, Ordering::SeqCst);
+    if let Ok(mut cache) = state.snapshot_cache.lock() {
+        *cache = None;
+    }
+    let _ = publish_account_vault(app, state);
+    let _ = app.emit_to("widget", "account-switch-completed", outcome.clone());
+    let _ = app.emit_to(
+        "account-switcher",
+        "account-switch-completed",
+        outcome.clone(),
+    );
+    let _ = app.emit_to("widget", "refresh-requested", ());
+    Ok(outcome)
+}
+
+#[tauri::command]
+async fn switch_account(
+    profile_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<account_vault::SwitchOutcome, String> {
+    switch_account_internal(&profile_id, &app, state.inner()).await
+}
+
+fn codex_cli_candidates() -> Vec<PathBuf> {
+    let mut candidates = vec![
+        PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
+        PathBuf::from("/Applications/Codex.app/Contents/MacOS/codex"),
+        PathBuf::from("/opt/homebrew/bin/codex"),
+        PathBuf::from("/usr/local/bin/codex"),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".local/bin/codex"));
+    }
+    candidates
+}
+
+fn locate_codex_cli() -> PathBuf {
+    codex_cli_candidates()
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| PathBuf::from("codex"))
+}
+
+fn cleanup_login_task(root: &Path, task_root: &Path) {
+    if task_root.starts_with(root) && task_root != root {
+        let _ = fs::remove_dir_all(task_root);
+    }
+}
+
+fn cleanup_stale_login_tasks(root: &Path) {
+    let Ok(metadata) = fs::symlink_metadata(root) else {
+        return;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let safe_directory = entry
+            .file_type()
+            .map(|kind| kind.is_dir() && !kind.is_symlink())
+            .unwrap_or(false);
+        if safe_directory {
+            cleanup_login_task(root, &path);
+        }
+    }
+}
+
+#[tauri::command]
+fn begin_account_login(
+    alias: String,
+    replace_profile_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<AccountLoginStatus, String> {
+    let alias = alias.trim().to_string();
+    if alias.is_empty() || alias.chars().count() > 32 || alias.chars().any(char::is_control) {
+        return Err("Account name must contain 1-32 visible characters.".into());
+    }
+    let mut slot = state
+        .account_login_task
+        .lock()
+        .map_err(|_| "Account login state is busy.".to_string())?;
+    if slot.is_some() {
+        return Err("Another account login is already running.".into());
+    }
+    fs::create_dir_all(&state.account_login_root)
+        .map_err(|_| "Account login directory could not be created.".to_string())?;
+    let root_metadata = fs::symlink_metadata(&state.account_login_root)
+        .map_err(|_| "Account login directory is unavailable.".to_string())?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err("Account login directory is not safe.".into());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let task_root = state.account_login_root.join(&id);
+    let codex_home = task_root.join("codex-home");
+    fs::create_dir_all(&codex_home)
+        .map_err(|_| "Isolated Codex login directory could not be created.".to_string())?;
+    let child = match Command::new(locate_codex_cli())
+        .arg("login")
+        .env("CODEX_HOME", &codex_home)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => {
+            cleanup_login_task(&state.account_login_root, &task_root);
+            return Err("Codex CLI was not found or login could not be started.".into());
+        }
+    };
+    *slot = Some(AccountLoginTask {
+        id: id.clone(),
+        alias,
+        replace_profile_id,
+        task_root,
+        child,
+        started_at: Instant::now(),
+    });
+    Ok(AccountLoginStatus {
+        task_id: id,
+        status: "running",
+        message: None,
+    })
+}
+
+#[tauri::command]
+fn poll_account_login(
+    task_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AccountLoginStatus, String> {
+    let mut slot = state
+        .account_login_task
+        .lock()
+        .map_err(|_| "Account login state is busy.".to_string())?;
+    let task = slot
+        .as_mut()
+        .ok_or_else(|| "No account login is running.".to_string())?;
+    if task.id != task_id {
+        return Err("Account login task does not match.".into());
+    }
+    if task.started_at.elapsed() > Duration::from_secs(10 * 60) {
+        let mut task = slot.take().expect("login task was checked");
+        let _ = task.child.kill();
+        let _ = task.child.wait();
+        cleanup_login_task(&state.account_login_root, &task.task_root);
+        return Ok(AccountLoginStatus {
+            task_id,
+            status: "failed",
+            message: Some("Codex login timed out after 10 minutes.".into()),
+        });
+    }
+    let Some(exit) = task
+        .child
+        .try_wait()
+        .map_err(|_| "Account login status could not be read.".to_string())?
+    else {
+        return Ok(AccountLoginStatus {
+            task_id,
+            status: "running",
+            message: None,
+        });
+    };
+    let task = slot.take().expect("login task was checked");
+    if !exit.success() {
+        cleanup_login_task(&state.account_login_root, &task.task_root);
+        return Ok(AccountLoginStatus {
+            task_id,
+            status: "failed",
+            message: Some("Codex login was cancelled or did not complete.".into()),
+        });
+    }
+    let auth_path = task.task_root.join("codex-home/auth.json");
+    let raw = match codex::read_auth_bytes(&auth_path) {
+        Ok(value) => value,
+        Err(message) => {
+            cleanup_login_task(&state.account_login_root, &task.task_root);
+            return Ok(AccountLoginStatus {
+                task_id,
+                status: "failed",
+                message: Some(message.into()),
+            });
+        }
+    };
+    let result = {
+        let mut vault = state
+            .account_vault
+            .lock()
+            .map_err(|_| "Account storage is busy.".to_string())?;
+        match task.replace_profile_id.as_deref() {
+            Some(profile_id) => vault.replace_credentials(profile_id, &raw),
+            None => vault.import_credentials(&task.alias, &raw),
+        }
+    };
+    cleanup_login_task(&state.account_login_root, &task.task_root);
+    match result {
+        Ok(view) => {
+            let _ = app.emit_to("widget", "account-vault-changed", view.clone());
+            let _ = app.emit_to("account-switcher", "account-vault-changed", view);
+            let _ = refresh_tray_menu(&app);
+            Ok(AccountLoginStatus {
+                task_id,
+                status: "completed",
+                message: None,
+            })
+        }
+        Err(message) => Ok(AccountLoginStatus {
+            task_id,
+            status: "failed",
+            message: Some(message),
+        }),
+    }
+}
+
+#[tauri::command]
+fn cancel_account_login(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut slot = state
+        .account_login_task
+        .lock()
+        .map_err(|_| "Account login state is busy.".to_string())?;
+    let Some(mut task) = slot.take() else {
+        return Ok(());
+    };
+    if task.id != task_id {
+        *slot = Some(task);
+        return Err("Account login task does not match.".into());
+    }
+    let _ = task.child.kill();
+    let _ = task.child.wait();
+    cleanup_login_task(&state.account_login_root, &task.task_root);
+    Ok(())
+}
+
+fn position_account_window(app: &AppHandle) -> Result<(), String> {
+    let widget = app
+        .get_webview_window("widget")
+        .ok_or_else(|| "widget window missing".to_string())?;
+    let account = app
+        .get_webview_window("account-switcher")
+        .ok_or_else(|| "account window missing".to_string())?;
+    if !account.is_visible().unwrap_or(false) {
+        return Ok(());
+    }
+    let widget_position = widget.outer_position().map_err(|error| error.to_string())?;
+    let widget_size = widget.outer_size().map_err(|error| error.to_string())?;
+    let account_size = account.outer_size().map_err(|error| error.to_string())?;
+    let scale = widget.scale_factor().unwrap_or(1.0);
+    let gap = (8.0 * scale).round() as i32;
+    let work_area = widget
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| *monitor.work_area());
+    let top = work_area.map(|area| area.position.y).unwrap_or(i32::MIN);
+    let bottom = work_area
+        .map(|area| area.position.y + area.size.height as i32)
+        .unwrap_or(i32::MAX);
+    let below = widget_position.y + widget_size.height as i32 + gap;
+    let y = if below + account_size.height as i32 <= bottom {
+        below
+    } else {
+        (widget_position.y - account_size.height as i32 - gap).max(top)
+    };
+    account
+        .set_position(tauri::PhysicalPosition::new(widget_position.x, y))
+        .map_err(|error| format!("failed to position account window: {error}"))
+}
+
+#[tauri::command]
+fn open_account_switcher(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<account_vault::AccountVaultView, String> {
+    finish_palette_preview(&app);
+    let account = app
+        .get_webview_window("account-switcher")
+        .ok_or_else(|| "account window missing".to_string())?;
+    let _ = app.emit_to("account-switcher", "account-switcher-opened", ());
+    let _ = app.emit_to("widget", "account-switcher-opened", ());
+    account
+        .show()
+        .map_err(|error| format!("failed to show account window: {error}"))?;
+    let _ = account.set_always_on_top(true);
+    position_account_window(&app)?;
+    let view = publish_account_vault(&app, state.inner())?;
+    let _ = account.set_focus();
+    Ok(view)
+}
+
+#[tauri::command]
+fn close_account_switcher(app: AppHandle) -> Result<(), String> {
+    let account = app
+        .get_webview_window("account-switcher")
+        .ok_or_else(|| "account window missing".to_string())?;
+    account
+        .hide()
+        .map_err(|error| format!("failed to hide account window: {error}"))?;
+    let _ = app.emit_to("widget", "account-switcher-closed", ());
+    Ok(())
+}
+
+fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let chinese = app
+        .try_state::<AppState>()
+        .and_then(|state| {
+            state
+                .preferences
+                .lock()
+                .ok()
+                .map(|preferences| preferences.language != "en")
+        })
+        .unwrap_or(true);
+    let text = |zh: &'static str, en: &'static str| if chinese { zh } else { en };
+    let show = MenuItem::with_id(
+        app,
+        "show",
+        text("显示 / 隐藏", "Show / Hide"),
+        true,
+        None::<&str>,
+    )?;
+    let refresh = MenuItem::with_id(
+        app,
+        "refresh",
+        text("立即刷新", "Refresh now"),
+        true,
+        None::<&str>,
+    )?;
+    let unlock = MenuItem::with_id(
+        app,
+        "unlock",
+        text("解锁悬浮窗", "Unlock widget"),
+        true,
+        None::<&str>,
+    )?;
+    let pin = MenuItem::with_id(
+        app,
+        "pin",
+        text("固定 / 取消固定 Codex", "Pin / Unpin Codex"),
+        true,
+        None::<&str>,
+    )?;
+    let language = MenuItem::with_id(
+        app,
+        "language",
+        text("切换语言 / Switch Language", "Switch Language / 切换语言"),
+        true,
+        None::<&str>,
+    )?;
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     let autostart = CheckMenuItem::with_id(
         app,
         "autostart",
-        "Start at login",
+        text("登录时启动", "Start at login"),
         true,
         autostart_enabled,
         None::<&str>,
     )?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &refresh, &unlock, &pin, &language, &autostart, &quit])?;
+    let accounts = Submenu::new(app, text("Codex 账号", "Codex Accounts"), true)?;
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Ok(vault) = state.account_vault.lock() {
+            if let Ok(view) = vault.view() {
+                for profile in view.profiles {
+                    let label = if profile.is_active {
+                        format!("✓ {}", profile.alias)
+                    } else {
+                        profile.alias
+                    };
+                    let item = MenuItem::with_id(
+                        app,
+                        format!("account-switch:{}", profile.id),
+                        label,
+                        !profile.is_active && profile.credential_status == "ready",
+                        None::<&str>,
+                    )?;
+                    accounts.append(&item)?;
+                }
+            }
+        }
+    }
+    let manage_accounts = MenuItem::with_id(
+        app,
+        "account-manage",
+        text("管理账号…", "Manage accounts…"),
+        true,
+        None::<&str>,
+    )?;
+    accounts.append(&manage_accounts)?;
+    let quit = MenuItem::with_id(app, "quit", text("退出", "Quit"), true, None::<&str>)?;
+    Menu::with_items(
+        app,
+        &[
+            &show, &refresh, &accounts, &unlock, &pin, &language, &autostart, &quit,
+        ],
+    )
+}
+
+fn refresh_tray_menu(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(tray) = app.tray_by_id("main") {
+        tray.set_menu(Some(build_tray_menu(app)?))?;
+    }
+    Ok(())
+}
+
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    let menu = build_tray_menu(app.handle())?;
     let mut builder = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .tooltip("Quota Beacon");
     if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
     }
-    let autostart_menu = autostart.clone();
     builder
-        .on_menu_event(move |app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("widget") {
-                    if window.is_visible().unwrap_or(false) {
-                        let _ = window.hide();
-                        finish_palette_preview(app);
+        .on_menu_event(move |app, event| {
+            if let Some(profile_id) = event.id.as_ref().strip_prefix("account-switch:") {
+                let app = app.clone();
+                let profile_id = profile_id.to_string();
+                tauri::async_runtime::spawn(async move {
+                    let result = if let Some(state) = app.try_state::<AppState>() {
+                        switch_account_internal(&profile_id, &app, state.inner()).await
                     } else {
-                        let _ = window.show();
-                        let _ = window.set_focus();
+                        Err("Account state is unavailable.".into())
+                    };
+                    if let Err(message) = result {
+                        let _ = app.emit_to("widget", "account-operation-error", message.clone());
+                        let _ = app.emit_to("account-switcher", "account-operation-error", message);
+                    }
+                });
+                return;
+            }
+            match event.id.as_ref() {
+                "account-manage" => {
+                    if let Some(state) = app.try_state::<AppState>() {
+                        let _ = open_account_switcher(app.clone(), state);
                     }
                 }
-            }
-            "refresh" => {
-                let _ = app.emit_to("widget", "refresh-requested", ());
-            }
-            "unlock" => {
-                let _ = apply_lock(app, false);
-                if let Some(state) = app.try_state::<AppState>() {
-                    if let Ok(mut prefs) = state.preferences.lock() {
-                        prefs.locked = false;
-                        let _ = persist_preferences(&state.preferences_path, &prefs);
-                        let _ = app.emit_to("widget", "preferences-changed", prefs.clone());
-                    }
-                }
-            }
-            "pin" => {
-                if let Some(state) = app.try_state::<AppState>() {
-                    if let Ok(mut prefs) = state.preferences.lock() {
-                        prefs.pinned_provider = if prefs.pinned_provider.is_some() {
-                            None
+                "show" => {
+                    if let Some(window) = app.get_webview_window("widget") {
+                        if window.is_visible().unwrap_or(false) {
+                            let _ = window.hide();
+                            finish_palette_preview(app);
+                            if let Some(account) = app.get_webview_window("account-switcher") {
+                                let _ = account.hide();
+                            }
                         } else {
-                            Some("codex".into())
-                        };
-                        let _ = persist_preferences(&state.preferences_path, &prefs);
-                        let _ = app.emit_to("widget", "preferences-changed", prefs.clone());
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
                     }
                 }
-            }
-            "language" => {
-                if let Some(state) = app.try_state::<AppState>() {
-                    if let Ok(mut prefs) = state.preferences.lock() {
-                        prefs.language = if prefs.language == "en" {
-                            "zh-CN".into()
-                        } else {
-                            "en".into()
-                        };
-                        let normalized = prefs.clone().normalized();
-                        *prefs = normalized.clone();
-                        let _ = persist_preferences(&state.preferences_path, &normalized);
-                        let _ = app.emit_to("widget", "preferences-changed", normalized);
+                "refresh" => {
+                    let _ = app.emit_to("widget", "refresh-requested", ());
+                }
+                "unlock" => {
+                    let _ = apply_lock(app, false);
+                    if let Some(state) = app.try_state::<AppState>() {
+                        if let Ok(mut prefs) = state.preferences.lock() {
+                            prefs.locked = false;
+                            let _ = persist_preferences(&state.preferences_path, &prefs);
+                            let _ = app.emit_to("widget", "preferences-changed", prefs.clone());
+                        }
                     }
                 }
-            }
-            "autostart" => {
-                let manager = app.autolaunch();
-                let enabled = manager.is_enabled().unwrap_or(false);
-                let result = if enabled {
-                    manager.disable()
-                } else {
-                    manager.enable()
-                };
-                match result {
-                    Ok(()) => {
-                        let _ = autostart_menu.set_checked(!enabled);
+                "pin" => {
+                    if let Some(state) = app.try_state::<AppState>() {
+                        if let Ok(mut prefs) = state.preferences.lock() {
+                            prefs.pinned_provider = if prefs.pinned_provider.is_some() {
+                                None
+                            } else {
+                                Some("codex".into())
+                            };
+                            let _ = persist_preferences(&state.preferences_path, &prefs);
+                            let _ = app.emit_to("widget", "preferences-changed", prefs.clone());
+                        }
                     }
-                    Err(_) => eprintln!("autostart update failed"),
                 }
+                "language" => {
+                    if let Some(state) = app.try_state::<AppState>() {
+                        if let Ok(mut prefs) = state.preferences.lock() {
+                            prefs.language = if prefs.language == "en" {
+                                "zh-CN".into()
+                            } else {
+                                "en".into()
+                            };
+                            let normalized = prefs.clone().normalized();
+                            *prefs = normalized.clone();
+                            let _ = persist_preferences(&state.preferences_path, &normalized);
+                            let _ = app.emit_to("widget", "preferences-changed", normalized);
+                        }
+                    }
+                    let _ = refresh_tray_menu(app);
+                }
+                "autostart" => {
+                    let manager = app.autolaunch();
+                    let enabled = manager.is_enabled().unwrap_or(false);
+                    let result = if enabled {
+                        manager.disable()
+                    } else {
+                        manager.enable()
+                    };
+                    match result {
+                        Ok(()) => {
+                            let _ = refresh_tray_menu(app);
+                        }
+                        Err(_) => eprintln!("autostart update failed"),
+                    }
+                }
+                "quit" => app.exit(0),
+                _ => {}
             }
-            "quit" => app.exit(0),
-            _ => {}
         })
         .build(app)?;
     Ok(())
@@ -503,10 +1053,17 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(WindowStateBuilder::default().with_denylist(&["palette", "palette-editor"]).build())
+        .plugin(
+            WindowStateBuilder::default()
+                .with_denylist(&["palette", "palette-editor", "account-switcher"])
+                .build(),
+        )
         .setup(|app| {
             let data_dir = app.path().app_config_dir()?;
             let preferences_path = data_dir.join("preferences.json");
+            let accounts_root = data_dir.join("accounts");
+            let account_login_root = accounts_root.join("login-tasks");
+            cleanup_stale_login_tasks(&account_login_root);
             let preferences = load_preferences(&preferences_path);
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(12))
@@ -521,8 +1078,13 @@ pub fn run() {
                 preferences_path,
                 fetch_lock: tokio::sync::Mutex::new(()),
                 snapshot_cache: Mutex::new(None),
+                account_generation: AtomicU64::new(0),
                 token_usage_cache: Arc::clone(&token_usage_cache),
                 palette_generation: AtomicU64::new(0),
+                account_vault: Mutex::new(account_vault::AccountVault::load(accounts_root)),
+                account_switch_lock: tokio::sync::Mutex::new(()),
+                account_login_task: Mutex::new(None),
+                account_login_root,
             });
             codex_overlay::start(app.handle().clone(), token_usage_cache);
             if setup_tray(app).is_err() {
@@ -551,7 +1113,17 @@ pub fn run() {
             update_palette_preview,
             update_palette_colors,
             save_palette_colors,
-            close_palette_preview
+            close_palette_preview,
+            get_account_vault,
+            save_current_account,
+            rename_account,
+            delete_account,
+            switch_account,
+            begin_account_login,
+            poll_account_login,
+            cancel_account_login,
+            open_account_switcher,
+            close_account_switcher
         ])
         .on_tray_icon_event(|app, event| {
             if let TrayIconEvent::Click {
@@ -567,20 +1139,28 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
-            if window.label() == "widget" && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_)) {
+            if window.label() == "widget"
+                && matches!(event, WindowEvent::Moved(_) | WindowEvent::Resized(_))
+            {
                 let _ = position_palette_windows(window.app_handle());
+                let _ = position_account_window(window.app_handle());
             }
-            if ["widget", "palette", "palette-editor"].contains(&window.label())
+            if window.label() == "account-switcher" && matches!(event, WindowEvent::Resized(_)) {
+                let _ = position_account_window(window.app_handle());
+            }
+            if ["widget", "palette", "palette-editor", "account-switcher"].contains(&window.label())
                 && matches!(event, WindowEvent::Focused(false))
             {
                 let app = window.app_handle().clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(50)).await;
-                    let app_focused = ["widget", "palette", "palette-editor"].iter().any(|label| {
-                        app.get_webview_window(label)
-                            .and_then(|window| window.is_focused().ok())
-                            .unwrap_or(false)
-                    });
+                    let app_focused = ["widget", "palette", "palette-editor", "account-switcher"]
+                        .iter()
+                        .any(|label| {
+                            app.get_webview_window(label)
+                                .and_then(|window| window.is_focused().ok())
+                                .unwrap_or(false)
+                        });
                     if !app_focused {
                         let _ = app.emit_to("widget", "widget-focus-lost", ());
                     }
@@ -591,8 +1171,17 @@ pub fn run() {
                 let _ = window.hide();
                 if window.label() == "palette" || window.label() == "palette-editor" {
                     finish_palette_preview(window.app_handle());
+                } else if window.label() == "account-switcher" {
+                    let _ = window
+                        .app_handle()
+                        .emit_to("widget", "account-switcher-closed", ());
                 } else if window.label() == "widget" {
                     finish_palette_preview(window.app_handle());
+                    if let Some(account) =
+                        window.app_handle().get_webview_window("account-switcher")
+                    {
+                        let _ = account.hide();
+                    }
                 }
             }
         })
@@ -602,5 +1191,30 @@ pub fn run() {
         if matches!(event, tauri::RunEvent::Resumed) {
             let _ = app_handle.emit_to("widget", "refresh-requested", ());
         }
+        if matches!(event, tauri::RunEvent::Exit) {
+            if let Some(state) = app_handle.try_state::<AppState>() {
+                if let Ok(mut slot) = state.account_login_task.lock() {
+                    if let Some(mut task) = slot.take() {
+                        let _ = task.child.kill();
+                        let _ = task.child.wait();
+                        cleanup_login_task(&state.account_login_root, &task.task_root);
+                    }
+                }
+            }
+        }
     });
+}
+
+#[cfg(test)]
+mod account_generation_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_a_response_started_before_an_account_switch() {
+        let generation = AtomicU64::new(7);
+        assert!(account_response_is_current(7, &generation));
+        generation.fetch_add(1, Ordering::SeqCst);
+        assert!(!account_response_is_current(7, &generation));
+        assert!(account_response_is_current(8, &generation));
+    }
 }

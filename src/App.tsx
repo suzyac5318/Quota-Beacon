@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { QuotaCard } from "./components/QuotaCard";
+import { closeAccountSwitcher, getAccountVault, listenAccountEvents, openAccountSwitcher, type AccountVault } from "./lib/accounts";
 import { closePalettePreview, fetchSnapshots, fetchTokenUsage, getPreferences, listenDesktopEvents, listenPalettePreview, openPalettePreview, setAlwaysOnTop, setWidgetExpanded, startDragging, updatePreferences } from "./lib/bridge";
 import { clampPercent, getPrimaryQuota } from "./lib/format";
 import { copy, nextLanguage, normalizeLanguage } from "./lib/i18n";
@@ -27,12 +28,17 @@ export default function App() {
   const [tokenUsage, setTokenUsage] = useState<TokenUsageSummary | null>(null);
   const [tokenUsageStatus, setTokenUsageStatus] = useState<TokenUsageStatus>("loading");
   const [conversationTokenUsage, setConversationTokenUsage] = useState<ConversationTokenUsage>({ conversationId: null, totalTokens: null });
+  const [accountVault, setAccountVault] = useState<AccountVault | null>(null);
+  const [accountActive, setAccountActive] = useState(false);
   const failures = useRef(0);
   const previousPrimary = useRef(new Map<string, number>());
   const consumptionTimers = useRef(new Map<string, number>());
   const paletteActive = useRef(false);
   const paletteOpening = useRef(false);
   const paletteClosing = useRef(false);
+  const accountActiveRef = useRef(false);
+  const accountOpening = useRef(false);
+  const accountClosing = useRef(false);
   const hoveredRef = useRef(false);
   const hoverExpandTimer = useRef<number | null>(null);
   const collapseDelayTimer = useRef<number | null>(null);
@@ -48,15 +54,15 @@ export default function App() {
   }, []);
 
   const scheduleCollapse = useCallback((withHoverDelay = true) => {
-    if (paletteActive.current) return;
+    if (paletteActive.current || accountActiveRef.current) return;
     if (collapseDelayTimer.current !== null) window.clearTimeout(collapseDelayTimer.current);
     collapseDelayTimer.current = window.setTimeout(() => {
       collapseDelayTimer.current = null;
-      if (hoveredRef.current || paletteActive.current) return;
+      if (hoveredRef.current || paletteActive.current || accountActiveRef.current) return;
       setCompact(true);
       collapseResizeTimer.current = window.setTimeout(() => {
         collapseResizeTimer.current = null;
-        if (hoveredRef.current || paletteActive.current) return;
+        if (hoveredRef.current || paletteActive.current || accountActiveRef.current) return;
         void setWidgetExpanded(false).catch(() => setOperationError("Widget collapse failed."));
       }, COLLAPSE_MORPH_MS);
     }, withHoverDelay ? COLLAPSE_DELAY_MS : 0);
@@ -147,6 +153,38 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let cleanup = () => {};
+    void getAccountVault().then((value) => { if (!cancelled) setAccountVault(value); }).catch(() => undefined);
+    void listenAccountEvents({
+      onVault: setAccountVault,
+      onOpened: () => {
+        accountActiveRef.current = true;
+        accountOpening.current = false;
+        accountClosing.current = false;
+        setAccountActive(true);
+        clearWidgetMotionTimers();
+        setCompact(false);
+      },
+      onClosed: () => {
+        accountActiveRef.current = false;
+        accountOpening.current = false;
+        accountClosing.current = false;
+        setAccountActive(false);
+        if (!hoveredRef.current) scheduleCollapse(false);
+      },
+      onSwitched: () => {
+        previousPrimary.current.clear();
+        setSnapshots([]);
+        setOperationError(language === "en" ? "Account switched. Refreshing quota…" : "账号已切换，正在刷新额度…");
+        void refresh(true).then(() => setOperationError(null));
+      },
+      onError: setOperationError,
+    }).then((unlisten) => { if (cancelled) unlisten(); else cleanup = unlisten; });
+    return () => { cancelled = true; cleanup(); };
+  }, [clearWidgetMotionTimers, language, refresh, scheduleCollapse]);
+
+  useEffect(() => {
+    let cancelled = false;
     let cleanup: () => void = () => {};
     void listenDesktopEvents({
       onPreferences: (value) => { setPreferences({ ...DEFAULT_PREFS, ...value, language: normalizeLanguage(value.language), paletteColors: normalizePaletteColors(value.paletteColors) }); setOperationError(null); },
@@ -154,6 +192,14 @@ export default function App() {
       onFocusLost: () => {
         hoveredRef.current = false;
         setHovered(false);
+        if (accountActiveRef.current && !accountClosing.current) {
+          accountClosing.current = true;
+          void closeAccountSwitcher().catch(() => {
+            accountClosing.current = false;
+            setOperationError("Unable to close account manager.");
+          });
+          return;
+        }
         if (paletteActive.current) {
           if (paletteClosing.current) return;
           paletteClosing.current = true;
@@ -272,6 +318,38 @@ export default function App() {
     });
   }, [clearWidgetMotionTimers, current]);
 
+  const handleAccounts = useCallback(() => {
+    if (accountActiveRef.current) {
+      if (accountClosing.current) return;
+      accountClosing.current = true;
+      void closeAccountSwitcher().catch(() => {
+        accountClosing.current = false;
+        setOperationError("Unable to close account manager.");
+      });
+      return;
+    }
+    if (accountOpening.current) return;
+    accountOpening.current = true;
+    clearWidgetMotionTimers();
+    setCompact(false);
+    void setWidgetExpanded(true);
+    void openAccountSwitcher().then((value) => {
+      setAccountVault(value);
+      accountActiveRef.current = true;
+      accountOpening.current = false;
+      setAccountActive(true);
+    }).catch(() => {
+      accountOpening.current = false;
+      setOperationError("Unable to open account manager.");
+    });
+  }, [clearWidgetMotionTimers]);
+
+  const dismissAccounts = useCallback(() => {
+    if (!accountActiveRef.current || accountClosing.current) return;
+    accountClosing.current = true;
+    void closeAccountSwitcher().catch(() => { accountClosing.current = false; });
+  }, []);
+
   if (!displayed) return <div className="loading-card" aria-label={t.loadingQuota}><span /><span /><span /></div>;
 
   return (
@@ -297,6 +375,10 @@ export default function App() {
       paletteColors={activePaletteColors}
       compact={compact}
       hovered={hovered}
+      accountVault={accountVault}
+      accountActive={accountActive}
+      onAccounts={handleAccounts}
+      onDismissAccounts={dismissAccounts}
     />
   );
 }

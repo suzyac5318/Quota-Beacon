@@ -1,4 +1,4 @@
-import { ArrowClockwise, ArrowDown, ArrowUp, ClockCounterClockwise, CloudSlash, PushPin, PushPinSlash, SignIn, WarningCircle } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowDown, ArrowUp, ClockCounterClockwise, CloudSlash, PushPin, PushPinSlash, SignIn, UserCircle, WarningCircle } from "@phosphor-icons/react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { clampPercent, formatCompactTokens, formatDateTime, formatExactTokens, formatResetDate, formatResetTime, getPrimaryQuota } from "../lib/format";
 import { copy, normalizeLanguage } from "../lib/i18n";
@@ -6,6 +6,7 @@ import { quotaThemeStyle } from "../lib/quotaTheme";
 import type { ConversationTokenUsage, Language, ProviderSnapshot, TokenUsageStatus, TokenUsageSummary, WidgetPreferences } from "../types";
 import { AnimatedNumber } from "./AnimatedNumber";
 import { ProviderMark } from "./ProviderMark";
+import type { AccountVault } from "../lib/accounts";
 
 interface Props {
   snapshot: ProviderSnapshot;
@@ -30,6 +31,10 @@ interface Props {
   paletteColors?: readonly string[];
   compact?: boolean;
   hovered?: boolean;
+  accountVault?: AccountVault | null;
+  accountActive?: boolean;
+  onAccounts?: () => void;
+  onDismissAccounts?: () => void;
 }
 
 function StatusIcon({ status, expired = false }: { status: ProviderSnapshot["status"]; expired?: boolean }) {
@@ -75,6 +80,10 @@ export const QuotaCard = memo(function QuotaCard({
   paletteColors,
   compact = false,
   hovered = false,
+  accountVault = null,
+  accountActive = false,
+  onAccounts,
+  onDismissAccounts,
 }: Props) {
   const [showCreditTip, setShowCreditTip] = useState(initialShowCreditTip);
   const language = normalizeLanguage(preferences.language);
@@ -115,6 +124,7 @@ export const QuotaCard = memo(function QuotaCard({
   const creditExpirations = useMemo(() => (snapshot.resetCreditExpiresAt ?? []).map((value, index) => {
     return t.creditItem(index, formatDateTime(value, language));
   }), [language, snapshot.resetCreditExpiresAt, t]);
+  const activeAccount = accountVault?.profiles.find((profile) => profile.isActive) ?? null;
 
   return (
     <main
@@ -123,6 +133,9 @@ export const QuotaCard = memo(function QuotaCard({
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
       onMouseDown={(event) => { if (event.button === 0) void onDrag(); }}
+      onPointerDownCapture={(event) => {
+        if (accountActive && !(event.target as HTMLElement).closest(".account-chip")) onDismissAccounts?.();
+      }}
     >
       <div className="aurora" aria-hidden="true" />
       <span className="sr-only" aria-live="polite">{available && primary !== null ? primaryLabel : message}</span>
@@ -142,6 +155,7 @@ export const QuotaCard = memo(function QuotaCard({
               <p className="eyebrow">{snapshot.displayName} · {snapshot.plan ?? t.accountFallback}</p>
               {snapshot.status !== "stale" ? <p className="updated">{weeklyOnly ? t.weeklyRemaining : t.shortRemaining}</p> : null}
             </div>
+            {onAccounts ? <button type="button" className={`account-chip${accountActive ? " account-chip--active" : ""}`} onMouseDown={(event) => event.stopPropagation()} onClick={onAccounts} aria-label={activeAccount ? `Codex 账号：${activeAccount.alias}` : "管理 Codex 账号"} aria-expanded={accountActive}><UserCircle /><span>{activeAccount?.alias ?? "账号"}</span></button> : null}
             {!preferences.locked ? (
               <nav className="card-actions" aria-label={t.controls} onMouseDown={(event) => event.stopPropagation()}>
                 {providerCount > 1 ? <button onClick={onPrevious} aria-label={t.servicePrevious}><ArrowUp /></button> : null}

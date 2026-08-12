@@ -1,4 +1,4 @@
-# Quota Beacon macOS 1.5.6
+# Quota Beacon macOS 1.7.0
 
 Quota Beacon is a local-first floating desktop widget for checking Codex usage limits from the local Codex Desktop login state.
 
