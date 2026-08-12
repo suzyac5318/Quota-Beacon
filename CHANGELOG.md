@@ -2,6 +2,19 @@
 
 本文件记录本仓库可核实的版本与开发里程碑。未创建 Git 提交或标签的工作统一标记为“未发布”，不追溯虚构版本号。
 
+## macOS 1.5.7 — 2026-08-12
+
+### 回归保护
+
+- 扩展 macOS 配置测试，统一校验 `VERSION`、npm、Cargo 与 Tauri 的 Mac 版本号，避免独立产品线发布时版本漂移。
+- 冻结 `macos-v*` 唯一发布触发条件、Mac-only runner 与工件边界，并覆盖 Universal `arm64 + x86_64` 构建目标。
+- 冻结 ad-hoc 签名、DMG 完整性、SHA-256 和草稿 Release 校验链，防止后续追赶 Windows 能力时破坏 Mac 发布基线。
+
+### 验证边界
+
+- Windows 本机可执行前端测试、TypeScript/Vite 构建、Rust 检查与 Rust 测试；macOS Universal 构建及 bundle 校验仍需 Mac CI。
+- 真实 Mac 浅色/深色桌面上的折叠球和展开卡片四角验收仍未执行，不以源码或 Windows 构建替代。
+
 ## macOS 1.5.6 — 2026-08-01
 
 ### 修复
