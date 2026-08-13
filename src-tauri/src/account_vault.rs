@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
     sync::Arc,
@@ -111,6 +111,7 @@ pub struct AccountVault {
     root: PathBuf,
     auth_path: PathBuf,
     state: AccountVaultState,
+    state_error: Option<String>,
     secrets: Arc<dyn SecretStore>,
 }
 
@@ -122,19 +123,25 @@ impl AccountVault {
 
     fn load_with_store(root: PathBuf, auth_path: PathBuf, secrets: Arc<dyn SecretStore>) -> Self {
         let state_path = root.join(STATE_FILE);
-        let state = read_regular_file(&state_path, codex::MAX_AUTH_BYTES)
-            .ok()
-            .and_then(|raw| serde_json::from_slice(&raw).ok())
-            .unwrap_or_default();
+        let (state, state_error) = load_state_with_recovery(&state_path);
         Self {
             root,
             auth_path,
             state,
+            state_error,
             secrets,
         }
     }
 
+    fn ensure_state_ready(&self) -> Result<(), String> {
+        match &self.state_error {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
+    }
+
     pub fn view(&self) -> Result<AccountVaultView, String> {
+        self.ensure_state_ready()?;
         let current = self.current_identity().ok();
         let current_fingerprint = current.as_ref().map(fingerprint);
         let profiles = self
@@ -157,6 +164,7 @@ impl AccountVault {
     }
 
     pub fn save_current(&mut self, alias: &str) -> Result<AccountVaultView, String> {
+        self.ensure_state_ready()?;
         let alias = validate_alias(alias)?;
         let raw = read_regular_file(&self.auth_path, codex::MAX_AUTH_BYTES)
             .map_err(|_| "Current Codex login is unavailable.".to_string())?;
@@ -200,10 +208,15 @@ impl AccountVault {
         }
         if let Err(error) = self.persist_state() {
             self.state = previous_state;
-            if let Some(secret) = previous_secret {
-                let _ = self.secrets.set(&touched_id, &secret);
+            let restored = if let Some(secret) = previous_secret {
+                self.secrets.set(&touched_id, &secret).is_ok()
             } else {
-                let _ = self.secrets.delete(&touched_id);
+                self.secrets.delete(&touched_id).is_ok()
+            };
+            if !restored {
+                return Err(format!(
+                    "{error} Keychain rollback also failed; account recovery requires attention."
+                ));
             }
             return Err(error);
         }
@@ -215,6 +228,7 @@ impl AccountVault {
         alias: &str,
         raw: &[u8],
     ) -> Result<AccountVaultView, String> {
+        self.ensure_state_ready()?;
         let alias = validate_alias(alias)?;
         if raw.len() as u64 > codex::MAX_AUTH_BYTES {
             return Err("Codex login data is too large.".into());
@@ -241,7 +255,11 @@ impl AccountVault {
         });
         if let Err(error) = self.persist_state() {
             if let Some(profile) = self.state.profiles.pop() {
-                let _ = self.secrets.delete(&profile.id);
+                if self.secrets.delete(&profile.id).is_err() {
+                    return Err(format!(
+                        "{error} Keychain cleanup also failed; account recovery requires attention."
+                    ));
+                }
             }
             return Err(error);
         }
@@ -253,6 +271,7 @@ impl AccountVault {
         profile_id: &str,
         raw: &[u8],
     ) -> Result<AccountVaultView, String> {
+        self.ensure_state_ready()?;
         if raw.len() as u64 > codex::MAX_AUTH_BYTES {
             return Err("Codex login data is too large.".into());
         }
@@ -281,8 +300,15 @@ impl AccountVault {
         profile.fingerprint = identity_fingerprint;
         if let Err(error) = self.persist_state() {
             self.state = previous_state;
-            if let Some(secret) = previous_secret {
-                let _ = self.secrets.set(profile_id, &secret);
+            let restored = if let Some(secret) = previous_secret {
+                self.secrets.set(profile_id, &secret).is_ok()
+            } else {
+                self.secrets.delete(profile_id).is_ok()
+            };
+            if !restored {
+                return Err(format!(
+                    "{error} Keychain rollback also failed; account recovery requires attention."
+                ));
             }
             return Err(error);
         }
@@ -290,6 +316,7 @@ impl AccountVault {
     }
 
     pub fn rename(&mut self, profile_id: &str, alias: &str) -> Result<AccountVaultView, String> {
+        self.ensure_state_ready()?;
         let alias = validate_alias(alias)?;
         let previous_state = self.state.clone();
         let profile = self
@@ -307,6 +334,7 @@ impl AccountVault {
     }
 
     pub fn delete(&mut self, profile_id: &str) -> Result<AccountVaultView, String> {
+        self.ensure_state_ready()?;
         if self.state.active_profile_id.as_deref() == Some(profile_id) {
             return Err(
                 "Switch to another saved account before deleting the active account.".into(),
@@ -328,13 +356,18 @@ impl AccountVault {
         let profile = self.state.profiles.remove(index);
         if let Err(error) = self.persist_state() {
             self.state.profiles.insert(index, profile);
-            let _ = self.secrets.set(profile_id, &old_secret);
+            if self.secrets.set(profile_id, &old_secret).is_err() {
+                return Err(format!(
+                    "{error} Keychain rollback also failed; account recovery requires attention."
+                ));
+            }
             return Err(error);
         }
         self.view()
     }
 
     pub fn switch_to(&mut self, profile_id: &str) -> Result<SwitchOutcome, String> {
+        self.ensure_state_ready()?;
         self.sync_current_credentials()?;
         let target = self
             .state
@@ -361,8 +394,8 @@ impl AccountVault {
             .and_then(|bytes| codex::credential_identity(&bytes).ok())
             .is_some_and(|value| fingerprint(&value) == target.fingerprint);
         if !committed {
-            if let Some(previous) = previous_raw {
-                let _ = atomic_replace(&self.auth_path, &previous);
+            if !restore_login(&self.auth_path, previous_raw.as_deref()) {
+                return Err("Credential switch verification failed and the previous login could not be restored; account recovery requires attention.".into());
             }
             return Err(
                 "Credential switch verification failed; the previous login was restored.".into(),
@@ -371,8 +404,10 @@ impl AccountVault {
         self.state.active_profile_id = Some(profile_id.to_string());
         if let Err(error) = self.persist_state() {
             self.state = previous_state;
-            if let Some(previous) = previous_raw {
-                let _ = atomic_replace(&self.auth_path, &previous);
+            if !restore_login(&self.auth_path, previous_raw.as_deref()) {
+                return Err(format!(
+                    "{error} The previous login could not be restored; account recovery requires attention."
+                ));
             }
             return Err(format!("{error} The previous login was restored."));
         }
@@ -384,6 +419,7 @@ impl AccountVault {
     }
 
     pub fn read_profile_credentials(&self, profile_id: &str) -> Result<Vec<u8>, String> {
+        self.ensure_state_ready()?;
         let profile = self
             .state
             .profiles
@@ -455,10 +491,85 @@ impl AccountVault {
     }
 
     fn persist_state(&self) -> Result<(), String> {
+        if let Some(error) = &self.state_error {
+            return Err(error.clone());
+        }
+        validate_state(&self.state)?;
         let raw = serde_json::to_vec_pretty(&self.state)
             .map_err(|_| "Account metadata could not be encoded.".to_string())?;
         atomic_write(&self.root.join(STATE_FILE), &raw)
     }
+}
+
+fn validate_state(state: &AccountVaultState) -> Result<(), String> {
+    let mut ids = std::collections::HashSet::new();
+    let mut fingerprints = std::collections::HashSet::new();
+    for profile in &state.profiles {
+        if !ids.insert(profile.id.as_str()) {
+            return Err("Account metadata contains duplicate profile IDs.".into());
+        }
+        if !fingerprints.insert(profile.fingerprint.as_str()) {
+            return Err("Account metadata contains duplicate account identities.".into());
+        }
+    }
+    if state
+        .active_profile_id
+        .as_ref()
+        .is_some_and(|active| !ids.contains(active.as_str()))
+    {
+        return Err("Account metadata points to a missing active profile.".into());
+    }
+    Ok(())
+}
+
+fn decode_state(raw: &[u8]) -> Result<AccountVaultState, String> {
+    let state: AccountVaultState =
+        serde_json::from_slice(raw).map_err(|_| "Account metadata is damaged.".to_string())?;
+    validate_state(&state)?;
+    Ok(state)
+}
+
+fn load_state_with_recovery(path: &Path) -> (AccountVaultState, Option<String>) {
+    let backup = path.with_extension("bak");
+    let primary_exists = path.exists();
+    if primary_exists {
+        if let Ok(raw) = read_regular_file(path, codex::MAX_AUTH_BYTES) {
+            if let Ok(state) = decode_state(&raw) {
+                return (state, None);
+            }
+        }
+    }
+
+    let backup_exists = backup.exists();
+    if backup_exists {
+        if let Ok(raw) = read_regular_file(&backup, codex::MAX_AUTH_BYTES) {
+            if let Ok(state) = decode_state(&raw) {
+                match write_atomic_file(path, &raw, FileKind::Metadata) {
+                    Ok(()) => {
+                        eprintln!("account metadata recovered from the local backup");
+                        return (state, None);
+                    }
+                    Err(_) => {
+                        return (
+                            state,
+                            Some(
+                                "Account metadata backup is valid but could not be restored."
+                                    .into(),
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    if primary_exists || backup_exists {
+        return (
+            AccountVaultState::default(),
+            Some("Account metadata is damaged and no valid backup is available.".into()),
+        );
+    }
+    (AccountVaultState::default(), None)
 }
 
 fn validate_alias(alias: &str) -> Result<String, String> {
@@ -493,30 +604,99 @@ fn read_regular_file(path: &Path, max_bytes: u64) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|_| "File could not be read.".into())
 }
 
-fn atomic_write(path: &Path, raw: &[u8]) -> Result<(), String> {
+#[derive(Clone, Copy)]
+enum FileKind {
+    Metadata,
+    Credentials,
+}
+
+fn unique_temporary_path(parent: &Path, label: &str) -> PathBuf {
+    parent.join(format!(".{label}.quotabeacon.{}.tmp", uuid::Uuid::new_v4()))
+}
+
+fn write_atomic_file(path: &Path, raw: &[u8], kind: FileKind) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "Storage path is invalid.".to_string())?;
     fs::create_dir_all(parent)
         .map_err(|_| "Account storage directory could not be created.".to_string())?;
-    let temporary = path.with_extension("tmp");
-    let mut file = fs::File::create(&temporary)
+    let label = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("file");
+    let temporary = unique_temporary_path(parent, label);
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temporary)
         .map_err(|_| "Temporary account metadata could not be created.".to_string())?;
-    file.write_all(raw)
-        .and_then(|_| file.sync_all())
-        .map_err(|_| "Account metadata could not be written.".to_string())?;
-    if path.exists() {
-        let backup = path.with_extension("bak");
-        let _ = fs::remove_file(&backup);
-        fs::rename(path, &backup).map_err(|_| "Account metadata backup failed.".to_string())?;
-        if let Err(error) = fs::rename(&temporary, path) {
-            let _ = fs::rename(&backup, path);
-            return Err(format!("Account metadata commit failed: {error}"));
+    if file.write_all(raw).and_then(|_| file.sync_all()).is_err() {
+        drop(file);
+        let _ = fs::remove_file(&temporary);
+        return Err(match kind {
+            FileKind::Metadata => "Account metadata could not be written.".into(),
+            FileKind::Credentials => "Temporary Codex login could not be written.".into(),
+        });
+    }
+    drop(file);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600)).is_err() {
+            let _ = fs::remove_file(&temporary);
+            return Err("Temporary file permissions could not be secured.".into());
         }
-    } else {
-        fs::rename(&temporary, path).map_err(|_| "Account metadata commit failed.".to_string())?;
+    }
+    if let Err(error) = replace_file(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
     }
     Ok(())
+}
+
+fn replace_file(temporary: &Path, path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        fs::rename(temporary, path).map_err(|error| format!("Atomic file commit failed: {error}"))
+    }
+    #[cfg(not(unix))]
+    {
+        let backup = unique_temporary_path(
+            path.parent()
+                .ok_or_else(|| "Storage path is invalid.".to_string())?,
+            "replace-backup",
+        );
+        if path.exists() {
+            fs::rename(path, &backup)
+                .map_err(|error| format!("File replacement backup failed: {error}"))?;
+        }
+        if let Err(error) = fs::rename(temporary, path) {
+            if backup.exists() {
+                let _ = fs::rename(&backup, path);
+            }
+            return Err(format!("Atomic file commit failed: {error}"));
+        }
+        if backup.exists() {
+            let _ = fs::remove_file(backup);
+        }
+        Ok(())
+    }
+}
+
+fn atomic_write(path: &Path, raw: &[u8]) -> Result<(), String> {
+    let backup = path.with_extension("bak");
+    if path.exists() {
+        let current = read_regular_file(path, codex::MAX_AUTH_BYTES)
+            .map_err(|_| "Existing account metadata is unsafe or unreadable.".to_string())?;
+        write_atomic_file(&backup, &current, FileKind::Metadata)
+            .map_err(|_| "Account metadata backup failed.".to_string())?;
+    }
+    write_atomic_file(path, raw, FileKind::Metadata)
 }
 
 fn atomic_replace(path: &Path, raw: &[u8]) -> Result<(), String> {
@@ -531,31 +711,26 @@ fn atomic_replace(path: &Path, raw: &[u8]) -> Result<(), String> {
             return Err("Codex login path is not a safe regular file.".into());
         }
     }
-    let temporary = parent.join(".auth.json.quotabeacon.tmp");
-    let mut file = fs::File::create(&temporary)
-        .map_err(|_| "Temporary Codex login could not be created.".to_string())?;
-    file.write_all(raw)
-        .and_then(|_| file.sync_all())
-        .map_err(|_| "Temporary Codex login could not be written.".to_string())?;
-    #[cfg(unix)]
-    {
-        fs::rename(&temporary, path)
-            .map_err(|_| "Codex login could not be replaced atomically.".to_string())?;
-    }
-    #[cfg(not(unix))]
-    {
-        let backup = parent.join(".auth.json.quotabeacon.bak");
-        let _ = fs::remove_file(&backup);
-        if path.exists() {
-            fs::rename(path, &backup).map_err(|_| "Codex login backup failed.".to_string())?;
+    write_atomic_file(path, raw, FileKind::Credentials)
+}
+
+fn restore_login(path: &Path, previous: Option<&[u8]>) -> bool {
+    match previous {
+        Some(raw) => {
+            if atomic_replace(path, raw).is_err() {
+                return false;
+            }
+            read_regular_file(path, codex::MAX_AUTH_BYTES).is_ok_and(|value| value == raw)
         }
-        if let Err(error) = fs::rename(&temporary, path) {
-            let _ = fs::rename(&backup, path);
-            return Err(format!("Codex login replacement failed: {error}"));
+        None => {
+            if !path.exists() {
+                return true;
+            }
+            fs::symlink_metadata(path)
+                .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+                && fs::remove_file(path).is_ok()
         }
-        let _ = fs::remove_file(backup);
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -604,6 +779,146 @@ mod tests {
         let secrets = Arc::new(MemorySecrets::default());
         let vault = AccountVault::load_with_store(root.clone(), auth.clone(), secrets.clone());
         (root, auth, secrets, vault)
+    }
+
+    fn state_fixture(active_profile_id: Option<&str>) -> AccountVaultState {
+        AccountVaultState {
+            profiles: vec![AccountProfile {
+                id: "profile-a".into(),
+                alias: "A".into(),
+                masked_email: Some("a***@example.com".into()),
+                fingerprint: "fingerprint-a".into(),
+            }],
+            active_profile_id: active_profile_id.map(str::to_string),
+        }
+    }
+
+    fn write_state(path: &Path, state: &AccountVaultState) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, serde_json::to_vec_pretty(state).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn loads_valid_primary_metadata_without_rewriting_it() {
+        let (root, auth, secrets, _) = test_vault();
+        let state_path = root.join(STATE_FILE);
+        let expected = state_fixture(Some("profile-a"));
+        write_state(&state_path, &expected);
+        let before = fs::read(&state_path).unwrap();
+
+        let vault = AccountVault::load_with_store(root.clone(), auth, secrets);
+
+        assert_eq!(vault.state.profiles[0].id, "profile-a");
+        assert!(vault.state_error.is_none());
+        assert_eq!(fs::read(&state_path).unwrap(), before);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn restores_valid_backup_when_primary_is_missing_or_damaged() {
+        for damaged_primary in [false, true] {
+            let (root, auth, secrets, _) = test_vault();
+            let state_path = root.join(STATE_FILE);
+            let backup_path = state_path.with_extension("bak");
+            let expected = state_fixture(Some("profile-a"));
+            write_state(&backup_path, &expected);
+            if damaged_primary {
+                fs::write(&state_path, b"damaged metadata").unwrap();
+            }
+
+            let vault = AccountVault::load_with_store(root.clone(), auth, secrets);
+
+            assert!(vault.state_error.is_none());
+            assert_eq!(vault.state.profiles[0].id, "profile-a");
+            assert_eq!(
+                decode_state(&fs::read(&state_path).unwrap())
+                    .unwrap()
+                    .profiles
+                    .len(),
+                1
+            );
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn damaged_primary_and_backup_are_preserved_and_block_mutations() {
+        let (root, auth, secrets, _) = test_vault();
+        let state_path = root.join(STATE_FILE);
+        let backup_path = state_path.with_extension("bak");
+        fs::write(&state_path, b"damaged primary").unwrap();
+        fs::write(&backup_path, b"damaged backup").unwrap();
+        let primary_before = fs::read(&state_path).unwrap();
+        let backup_before = fs::read(&backup_path).unwrap();
+
+        let mut vault = AccountVault::load_with_store(root.clone(), auth, secrets);
+
+        assert!(vault.view().is_err());
+        assert!(vault.rename("missing", "new name").is_err());
+        assert_eq!(fs::read(&state_path).unwrap(), primary_before);
+        assert_eq!(fs::read(&backup_path).unwrap(), backup_before);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rejects_duplicate_ids_fingerprints_and_dangling_active_profile() {
+        let valid = state_fixture(Some("profile-a"));
+        let mut duplicate_id = valid.clone();
+        duplicate_id.profiles.push(AccountProfile {
+            id: "profile-a".into(),
+            alias: "B".into(),
+            masked_email: None,
+            fingerprint: "fingerprint-b".into(),
+        });
+        assert!(validate_state(&duplicate_id).is_err());
+
+        let mut duplicate_fingerprint = valid.clone();
+        duplicate_fingerprint.profiles.push(AccountProfile {
+            id: "profile-b".into(),
+            alias: "B".into(),
+            masked_email: None,
+            fingerprint: "fingerprint-a".into(),
+        });
+        assert!(validate_state(&duplicate_fingerprint).is_err());
+
+        let mut dangling = valid;
+        dangling.active_profile_id = Some("missing".into());
+        assert!(validate_state(&dangling).is_err());
+    }
+
+    #[test]
+    fn unique_temporary_files_do_not_overwrite_preexisting_paths() {
+        let (root, _, _, _) = test_vault();
+        let target = root.join("atomic.json");
+        let reserved = unique_temporary_path(&root, "atomic.json");
+        fs::write(&reserved, b"reserved").unwrap();
+
+        write_atomic_file(&target, b"new value", FileKind::Metadata).unwrap();
+
+        assert_eq!(fs::read(&reserved).unwrap(), b"reserved");
+        assert_eq!(fs::read(&target).unwrap(), b"new value");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn credential_and_metadata_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (root, auth, _, _) = test_vault();
+        let state_path = root.join(STATE_FILE);
+        atomic_write(&state_path, b"{}").unwrap();
+        atomic_replace(&auth, b"secret").unwrap();
+
+        assert_eq!(
+            fs::metadata(&state_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(&auth).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
