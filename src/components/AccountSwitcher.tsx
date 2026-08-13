@@ -36,6 +36,7 @@ export function AccountSwitcher() {
   const [windowTheme, setWindowTheme] = useState<AccountWindowTheme | null>(null);
   const [windowOpen, setWindowOpen] = useState(false);
   const noticeSequence = useRef(0);
+  const loginRef = useRef<AccountLoginStatus | null>(null);
   const t = useMemo(() => accountCopy(language), [language]);
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const quotaScope = vault ? `${vault.activeProfileId ?? ""}:${vault.profiles.map((profile) => `${profile.id}:${profile.credentialStatus}`).join("|")}` : "";
@@ -52,6 +53,14 @@ export function AccountSwitcher() {
       onVault: setVault,
       onSwitched: () => showNotice(t.switched, "success"),
       onOpened: (theme) => {
+        const loginRunning = loginRef.current?.status === "running";
+        setAlias("");
+        setAddOpen(loginRunning);
+        setNotice(loginRunning
+          ? { id: ++noticeSequence.current, kind: "info", message: t.browser }
+          : null);
+        setWeeklyQuotas(new Map());
+        setLogin((current) => current?.status === "running" ? current : null);
         setWindowTheme(theme);
         setWindowOpen(true);
       },
@@ -63,7 +72,11 @@ export function AccountSwitcher() {
       onError: (message) => showNotice(message),
     }).then((unlisten) => { if (cancelled) unlisten(); else cleanup = unlisten; });
     return () => { cancelled = true; cleanup(); };
-  }, [showNotice, t.switched]);
+  }, [showNotice, t.browser, t.switched]);
+
+  useEffect(() => {
+    loginRef.current = login;
+  }, [login]);
 
   useEffect(() => {
     if (notice?.kind !== "success") return;
@@ -101,8 +114,15 @@ export function AccountSwitcher() {
 
   useEffect(() => {
     if (!login || login.status !== "running") return;
-    const id = window.setInterval(() => {
-      void pollAccountLogin(login.taskId).then((status) => {
+    let disposed = false;
+    let timer: number | null = null;
+    let inFlight = false;
+    const poll = async () => {
+      if (disposed || inFlight) return;
+      inFlight = true;
+      try {
+        const status = await pollAccountLogin(login.taskId);
+        if (disposed) return;
         setLogin(status);
         if (status.status === "completed") {
           setAlias("");
@@ -111,10 +131,23 @@ export function AccountSwitcher() {
           void getAccountVault().then(setVault);
         } else if (status.status === "failed") {
           showNotice(status.message ?? "Codex login failed.");
+        } else {
+          timer = window.setTimeout(() => void poll(), 750);
         }
-      }).catch((error) => showNotice(String(error)));
-    }, 750);
-    return () => window.clearInterval(id);
+      } catch (error) {
+        if (!disposed) {
+          showNotice(String(error));
+          timer = window.setTimeout(() => void poll(), 750);
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 750);
+    return () => {
+      disposed = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
   }, [login, showNotice]);
 
   const run = useCallback(async (key: string, action: () => Promise<AccountVault>) => {

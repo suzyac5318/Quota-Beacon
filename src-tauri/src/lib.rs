@@ -6,7 +6,7 @@ mod models;
 mod token_usage;
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -42,6 +42,7 @@ struct AppState {
     account_vault: Mutex<account_vault::AccountVault>,
     account_switch_lock: tokio::sync::Mutex<()>,
     account_login_task: Mutex<Option<AccountLoginTask>>,
+    account_login_results: Mutex<HashMap<String, (Instant, AccountLoginStatus)>>,
     account_login_root: PathBuf,
 }
 
@@ -54,7 +55,7 @@ struct AccountLoginTask {
     started_at: Instant,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AccountLoginStatus {
     task_id: String,
@@ -762,6 +763,31 @@ fn cleanup_stale_login_tasks(root: &Path) {
     }
 }
 
+fn completed_login_status(
+    results: &Mutex<HashMap<String, (Instant, AccountLoginStatus)>>,
+    task_id: &str,
+) -> Option<AccountLoginStatus> {
+    let now = Instant::now();
+    results.lock().ok().and_then(|mut results| {
+        results.retain(|_, (completed_at, _)| {
+            now.saturating_duration_since(*completed_at) < Duration::from_secs(10 * 60)
+        });
+        results.get(task_id).map(|(_, status)| status.clone())
+    })
+}
+
+fn remember_login_status(
+    results: &Mutex<HashMap<String, (Instant, AccountLoginStatus)>>,
+    status: &AccountLoginStatus,
+) {
+    if status.status == "running" {
+        return;
+    }
+    if let Ok(mut results) = results.lock() {
+        results.insert(status.task_id.clone(), (Instant::now(), status.clone()));
+    }
+}
+
 #[tauri::command]
 fn begin_account_login(
     alias: String,
@@ -826,6 +852,9 @@ fn poll_account_login(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AccountLoginStatus, String> {
+    if let Some(status) = completed_login_status(&state.account_login_results, &task_id) {
+        return Ok(status);
+    }
     let mut slot = state
         .account_login_task
         .lock()
@@ -841,11 +870,13 @@ fn poll_account_login(
         let _ = task.child.kill();
         let _ = task.child.wait();
         cleanup_login_task(&state.account_login_root, &task.task_root);
-        return Ok(AccountLoginStatus {
+        let status = AccountLoginStatus {
             task_id,
             status: "failed",
             message: Some("Codex login timed out after 10 minutes.".into()),
-        });
+        };
+        remember_login_status(&state.account_login_results, &status);
+        return Ok(status);
     }
     let Some(exit) = task
         .child
@@ -861,22 +892,26 @@ fn poll_account_login(
     let task = slot.take().expect("login task was checked");
     if !exit.success() {
         cleanup_login_task(&state.account_login_root, &task.task_root);
-        return Ok(AccountLoginStatus {
+        let status = AccountLoginStatus {
             task_id,
             status: "failed",
             message: Some("Codex login was cancelled or did not complete.".into()),
-        });
+        };
+        remember_login_status(&state.account_login_results, &status);
+        return Ok(status);
     }
     let auth_path = task.task_root.join("codex-home/auth.json");
     let raw = match codex::read_auth_bytes(&auth_path) {
         Ok(value) => value,
         Err(message) => {
             cleanup_login_task(&state.account_login_root, &task.task_root);
-            return Ok(AccountLoginStatus {
+            let status = AccountLoginStatus {
                 task_id,
                 status: "failed",
                 message: Some(message.into()),
-            });
+            };
+            remember_login_status(&state.account_login_results, &status);
+            return Ok(status);
         }
     };
     let result = {
@@ -890,7 +925,7 @@ fn poll_account_login(
         }
     };
     cleanup_login_task(&state.account_login_root, &task.task_root);
-    match result {
+    let status = match result {
         Ok(view) => {
             if let Some(profile_id) = task.replace_profile_id.as_deref() {
                 if let Ok(mut quota_state) = state.account_quota_state.lock() {
@@ -900,18 +935,20 @@ fn poll_account_login(
             let _ = app.emit_to("widget", "account-vault-changed", view.clone());
             let _ = app.emit_to("account-switcher", "account-vault-changed", view);
             let _ = refresh_tray_menu(&app);
-            Ok(AccountLoginStatus {
+            AccountLoginStatus {
                 task_id,
                 status: "completed",
                 message: None,
-            })
+            }
         }
-        Err(message) => Ok(AccountLoginStatus {
+        Err(message) => AccountLoginStatus {
             task_id,
             status: "failed",
             message: Some(message),
-        }),
-    }
+        },
+    };
+    remember_login_status(&state.account_login_results, &status);
+    Ok(status)
 }
 
 #[tauri::command]
@@ -930,7 +967,56 @@ fn cancel_account_login(task_id: String, state: State<'_, AppState>) -> Result<(
     let _ = task.child.kill();
     let _ = task.child.wait();
     cleanup_login_task(&state.account_login_root, &task.task_root);
+    remember_login_status(
+        &state.account_login_results,
+        &AccountLoginStatus {
+            task_id,
+            status: "failed",
+            message: Some("Codex login was cancelled.".into()),
+        },
+    );
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PhysicalRect {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+fn clamp_axis(value: i32, start: i32, span: u32, item_span: u32) -> i32 {
+    let end = start.saturating_add(span as i32);
+    let max = end.saturating_sub(item_span as i32).max(start);
+    value.clamp(start, max)
+}
+
+fn account_window_position(
+    widget: PhysicalRect,
+    account_width: u32,
+    account_height: u32,
+    work_area: PhysicalRect,
+    gap: i32,
+) -> (i32, i32) {
+    let x = clamp_axis(widget.x, work_area.x, work_area.width, account_width);
+    let below = widget
+        .y
+        .saturating_add(widget.height as i32)
+        .saturating_add(gap);
+    let above = widget
+        .y
+        .saturating_sub(account_height as i32)
+        .saturating_sub(gap);
+    let work_bottom = work_area.y.saturating_add(work_area.height as i32);
+    let y = if below.saturating_add(account_height as i32) <= work_bottom {
+        below
+    } else if above >= work_area.y {
+        above
+    } else {
+        clamp_axis(widget.y, work_area.y, work_area.height, account_height)
+    };
+    (x, y)
 }
 
 fn position_account_window(app: &AppHandle) -> Result<(), String> {
@@ -953,18 +1039,33 @@ fn position_account_window(app: &AppHandle) -> Result<(), String> {
         .ok()
         .flatten()
         .map(|monitor| *monitor.work_area());
-    let top = work_area.map(|area| area.position.y).unwrap_or(i32::MIN);
-    let bottom = work_area
-        .map(|area| area.position.y + area.size.height as i32)
-        .unwrap_or(i32::MAX);
-    let below = widget_position.y + widget_size.height as i32 + gap;
-    let y = if below + account_size.height as i32 <= bottom {
-        below
-    } else {
-        (widget_position.y - account_size.height as i32 - gap).max(top)
-    };
+    let work_area = work_area
+        .map(|area| PhysicalRect {
+            x: area.position.x,
+            y: area.position.y,
+            width: area.size.width,
+            height: area.size.height,
+        })
+        .unwrap_or(PhysicalRect {
+            x: widget_position.x,
+            y: i32::MIN / 4,
+            width: account_size.width,
+            height: u32::MAX / 2,
+        });
+    let (x, y) = account_window_position(
+        PhysicalRect {
+            x: widget_position.x,
+            y: widget_position.y,
+            width: widget_size.width,
+            height: widget_size.height,
+        },
+        account_size.width,
+        account_size.height,
+        work_area,
+        gap,
+    );
     account
-        .set_position(tauri::PhysicalPosition::new(widget_position.x, y))
+        .set_position(tauri::PhysicalPosition::new(x, y))
         .map_err(|error| format!("failed to position account window: {error}"))
 }
 
@@ -1340,6 +1441,7 @@ pub fn run() {
                 account_vault: Mutex::new(account_vault::AccountVault::load(accounts_root)),
                 account_switch_lock: tokio::sync::Mutex::new(()),
                 account_login_task: Mutex::new(None),
+                account_login_results: Mutex::new(HashMap::new()),
                 account_login_root,
             });
             codex_overlay::start(app.handle().clone(), token_usage_cache);
@@ -1470,6 +1572,74 @@ mod account_generation_tests {
         generation.fetch_add(1, Ordering::SeqCst);
         assert!(!account_response_is_current(7, &generation));
         assert!(account_response_is_current(8, &generation));
+    }
+}
+
+#[cfg(test)]
+mod account_window_tests {
+    use super::*;
+
+    fn rect(x: i32, y: i32, width: u32, height: u32) -> PhysicalRect {
+        PhysicalRect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn clamps_account_window_to_right_and_left_monitor_edges() {
+        let work = rect(0, 24, 1440, 876);
+        assert_eq!(
+            account_window_position(rect(1380, 100, 100, 100), 320, 240, work, 8),
+            (1120, 208)
+        );
+        assert_eq!(
+            account_window_position(rect(-80, 100, 100, 100), 320, 240, work, 8),
+            (0, 208)
+        );
+    }
+
+    #[test]
+    fn supports_negative_coordinate_monitors_and_chooses_above_near_the_dock() {
+        let work = rect(-1920, 24, 1920, 1056);
+        assert_eq!(
+            account_window_position(rect(-1900, 900, 100, 100), 320, 240, work, 16),
+            (-1900, 644)
+        );
+    }
+
+    #[test]
+    fn clamps_when_neither_above_nor_below_has_enough_space() {
+        let work = rect(0, 24, 800, 300);
+        assert_eq!(
+            account_window_position(rect(200, 80, 100, 100), 320, 280, work, 8),
+            (200, 44)
+        );
+    }
+
+    #[test]
+    fn completed_login_status_is_idempotent_for_repeated_polls() {
+        let results = Mutex::new(HashMap::new());
+        let status = AccountLoginStatus {
+            task_id: "task".into(),
+            status: "completed",
+            message: None,
+        };
+        remember_login_status(&results, &status);
+        assert_eq!(
+            completed_login_status(&results, "task")
+                .expect("completed status")
+                .status,
+            "completed"
+        );
+        assert_eq!(
+            completed_login_status(&results, "task")
+                .expect("same completed status")
+                .status,
+            "completed"
+        );
     }
 }
 
