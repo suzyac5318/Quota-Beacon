@@ -1,7 +1,7 @@
 {
   "name": "quota-beacon",
   "private": true,
-  "version": "1.9.0",
+  "version": "1.9.3",
   "type": "module",
   "scripts": {
     "dev": "vite",

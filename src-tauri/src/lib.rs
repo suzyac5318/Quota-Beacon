@@ -1,3 +1,4 @@
+mod account_quota;
 mod account_vault;
 mod codex;
 mod codex_overlay;
@@ -5,7 +6,7 @@ mod models;
 mod token_usage;
 
 use std::{
-    collections::HashMap,
+    collections::HashSet,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -17,6 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use futures_util::{stream, StreamExt};
 use models::{AccountWeeklyQuota, ProviderSnapshot, TokenUsageSummary, WidgetPreferences};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, Submenu},
@@ -32,7 +34,8 @@ struct AppState {
     preferences_path: PathBuf,
     fetch_lock: tokio::sync::Mutex<()>,
     snapshot_cache: Mutex<Option<(Instant, Vec<ProviderSnapshot>)>>,
-    account_quota_cache: Mutex<HashMap<String, (Instant, AccountWeeklyQuota)>>,
+    account_quota_state: Mutex<account_quota::AccountQuotaState>,
+    account_window_generation: AtomicU64,
     account_generation: AtomicU64,
     token_usage_cache: Arc<Mutex<token_usage::TokenUsageCache>>,
     palette_generation: AtomicU64,
@@ -40,12 +43,6 @@ struct AppState {
     account_switch_lock: tokio::sync::Mutex<()>,
     account_login_task: Mutex<Option<AccountLoginTask>>,
     account_login_root: PathBuf,
-}
-
-const INACTIVE_ACCOUNT_QUOTA_TTL: Duration = Duration::from_secs(5 * 60);
-
-fn inactive_account_quota_is_fresh(updated_at: Instant, now: Instant) -> bool {
-    now.saturating_duration_since(updated_at) < INACTIVE_ACCOUNT_QUOTA_TTL
 }
 
 struct AccountLoginTask {
@@ -490,10 +487,18 @@ fn weekly_quota_from_snapshot(
     }
 }
 
+fn codex_snapshot(snapshots: &[ProviderSnapshot]) -> Option<ProviderSnapshot> {
+    snapshots
+        .iter()
+        .find(|snapshot| snapshot.provider == "codex")
+        .cloned()
+}
+
 #[tauri::command]
 async fn get_account_weekly_quotas(
     state: State<'_, AppState>,
 ) -> Result<Vec<AccountWeeklyQuota>, String> {
+    let window_generation = state.account_window_generation.load(Ordering::SeqCst);
     let vault_view = state
         .account_vault
         .lock()
@@ -504,17 +509,19 @@ async fn get_account_weekly_quotas(
         .iter()
         .map(|profile| profile.id.clone())
         .collect::<Vec<_>>();
-    if let Ok(mut cache) = state.account_quota_cache.lock() {
-        cache.retain(|profile_id, _| profile_ids.contains(profile_id));
+    let existing_profile_ids = profile_ids.iter().cloned().collect::<HashSet<_>>();
+    if let Ok(mut quota_state) = state.account_quota_state.lock() {
+        quota_state.prune(&existing_profile_ids);
     }
 
     let mut quotas = Vec::with_capacity(profile_ids.len());
+    let mut requests = Vec::new();
     for profile_id in profile_ids {
         if vault_view.active_profile_id.as_deref() == Some(profile_id.as_str()) {
             let snapshot = state.snapshot_cache.lock().ok().and_then(|cache| {
                 cache
                     .as_ref()
-                    .and_then(|(_, values)| values.first().cloned())
+                    .and_then(|(_, values)| codex_snapshot(values))
             });
             quotas.push(match snapshot {
                 Some(snapshot) => weekly_quota_from_snapshot(profile_id, snapshot),
@@ -530,39 +537,79 @@ async fn get_account_weekly_quotas(
 
         let now = Instant::now();
         let cached = state
-            .account_quota_cache
+            .account_quota_state
             .lock()
             .ok()
-            .and_then(|cache| cache.get(&profile_id).cloned())
-            .filter(|(updated_at, _)| inactive_account_quota_is_fresh(*updated_at, now))
-            .map(|(_, quota)| quota);
+            .and_then(|mut quota_state| quota_state.get_fresh(&profile_id, now));
         if let Some(cached) = cached {
             quotas.push(cached);
             continue;
         }
 
+        let generation = state
+            .account_quota_state
+            .lock()
+            .map_err(|_| "Account quota cache is busy.".to_string())?
+            .generation(&profile_id);
         let credentials = state
             .account_vault
             .lock()
             .map_err(|_| "Account storage is busy.".to_string())?
             .read_profile_credentials(&profile_id);
-        let quota = match credentials {
-            Ok(raw) => weekly_quota_from_snapshot(
-                profile_id.clone(),
-                codex::fetch_snapshot_from_bytes(&state.client, &raw).await,
-            ),
-            Err(message) => AccountWeeklyQuota {
+        match credentials {
+            Ok(raw) => requests.push((profile_id, generation, raw)),
+            Err(message) => quotas.push(AccountWeeklyQuota {
                 profile_id: profile_id.clone(),
                 remaining_percent: None,
                 status: "signed_out".into(),
                 message: Some(message),
-            },
-        };
-        if let Ok(mut cache) = state.account_quota_cache.lock() {
-            cache.insert(profile_id, (Instant::now(), quota.clone()));
+            }),
         }
-        quotas.push(quota);
     }
+
+    let client = state.client.clone();
+    let fetched = stream::iter(requests.into_iter().map(|(profile_id, generation, raw)| {
+        let client = client.clone();
+        async move {
+            let snapshot = codex::fetch_weekly_snapshot_from_bytes(&client, &raw).await;
+            (
+                profile_id.clone(),
+                generation,
+                weekly_quota_from_snapshot(profile_id, snapshot),
+            )
+        }
+    }))
+    .buffer_unordered(3)
+    .collect::<Vec<_>>()
+    .await;
+
+    for (profile_id, generation, quota) in fetched {
+        if state.account_window_generation.load(Ordering::SeqCst) != window_generation {
+            continue;
+        }
+        let inserted = state
+            .account_quota_state
+            .lock()
+            .map(|mut quota_state| {
+                quota_state.insert_if_current(
+                    &profile_id,
+                    generation,
+                    quota.clone(),
+                    Instant::now(),
+                )
+            })
+            .unwrap_or(false);
+        if inserted {
+            quotas.push(quota);
+        }
+    }
+    quotas.sort_by_key(|quota| {
+        vault_view
+            .profiles
+            .iter()
+            .position(|profile| profile.id == quota.profile_id)
+            .unwrap_or(usize::MAX)
+    });
     Ok(quotas)
 }
 
@@ -577,9 +624,9 @@ fn save_current_account(
         .lock()
         .map_err(|_| "Account storage is busy.".to_string())?
         .save_current(&alias)?;
-    if let Ok(mut cache) = state.account_quota_cache.lock() {
+    if let Ok(mut quota_state) = state.account_quota_state.lock() {
         if let Some(profile_id) = &view.active_profile_id {
-            cache.remove(profile_id);
+            quota_state.invalidate(profile_id);
         }
     }
     let _ = app.emit_to("widget", "account-vault-changed", view.clone());
@@ -617,8 +664,8 @@ fn delete_account(
         .lock()
         .map_err(|_| "Account storage is busy.".to_string())?
         .delete(&profile_id)?;
-    if let Ok(mut cache) = state.account_quota_cache.lock() {
-        cache.remove(&profile_id);
+    if let Ok(mut quota_state) = state.account_quota_state.lock() {
+        quota_state.invalidate(&profile_id);
     }
     let _ = app.emit_to("widget", "account-vault-changed", view.clone());
     let _ = app.emit_to("account-switcher", "account-vault-changed", view.clone());
@@ -640,8 +687,8 @@ async fn switch_account_internal(
         .lock()
         .map_err(|_| "Account storage is busy.".to_string())?
         .switch_to(profile_id)?;
-    if let Ok(mut cache) = state.account_quota_cache.lock() {
-        cache.remove(profile_id);
+    if let Ok(mut quota_state) = state.account_quota_state.lock() {
+        quota_state.invalidate(profile_id);
     }
     state.account_generation.fetch_add(1, Ordering::SeqCst);
     if let Ok(mut cache) = state.snapshot_cache.lock() {
@@ -846,8 +893,8 @@ fn poll_account_login(
     match result {
         Ok(view) => {
             if let Some(profile_id) = task.replace_profile_id.as_deref() {
-                if let Ok(mut cache) = state.account_quota_cache.lock() {
-                    cache.remove(profile_id);
+                if let Ok(mut quota_state) = state.account_quota_state.lock() {
+                    quota_state.invalidate(profile_id);
                 }
             }
             let _ = app.emit_to("widget", "account-vault-changed", view.clone());
@@ -921,6 +968,26 @@ fn position_account_window(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| format!("failed to position account window: {error}"))
 }
 
+fn hide_account_switcher(app: &AppHandle) -> Result<(), String> {
+    let account = app
+        .get_webview_window("account-switcher")
+        .ok_or_else(|| "account window missing".to_string())?;
+    if !account.is_visible().unwrap_or(false) {
+        return Ok(());
+    }
+    account
+        .hide()
+        .map_err(|error| format!("failed to hide account window: {error}"))?;
+    if let Some(state) = app.try_state::<AppState>() {
+        state
+            .account_window_generation
+            .fetch_add(1, Ordering::SeqCst);
+    }
+    let _ = app.emit_to("account-switcher", "account-switcher-closed", ());
+    let _ = app.emit_to("widget", "account-switcher-closed", ());
+    Ok(())
+}
+
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AccountWindowTheme {
@@ -976,14 +1043,26 @@ fn open_account_switcher(
     let account = app
         .get_webview_window("account-switcher")
         .ok_or_else(|| "account window missing".to_string())?;
-    let _ = app.emit_to("account-switcher", "account-switcher-opened", theme);
-    let _ = app.emit_to("widget", "account-switcher-opened", ());
     account
         .show()
         .map_err(|error| format!("failed to show account window: {error}"))?;
     let _ = account.set_always_on_top(true);
-    position_account_window(&app)?;
-    let view = publish_account_vault(&app, state.inner())?;
+    let opened = (|| {
+        position_account_window(&app)?;
+        publish_account_vault(&app, state.inner())
+    })();
+    let view = match opened {
+        Ok(view) => view,
+        Err(error) => {
+            let _ = hide_account_switcher(&app);
+            return Err(error);
+        }
+    };
+    state
+        .account_window_generation
+        .fetch_add(1, Ordering::SeqCst);
+    let _ = app.emit_to("account-switcher", "account-switcher-opened", theme);
+    let _ = app.emit_to("widget", "account-switcher-opened", ());
     let _ = account.set_focus();
     Ok(view)
 }
@@ -999,14 +1078,7 @@ fn update_account_switcher_theme(app: AppHandle, theme: AccountWindowTheme) {
 
 #[tauri::command]
 fn close_account_switcher(app: AppHandle) -> Result<(), String> {
-    let account = app
-        .get_webview_window("account-switcher")
-        .ok_or_else(|| "account window missing".to_string())?;
-    account
-        .hide()
-        .map_err(|error| format!("failed to hide account window: {error}"))?;
-    let _ = app.emit_to("widget", "account-switcher-closed", ());
-    Ok(())
+    hide_account_switcher(&app)
 }
 
 fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -1149,9 +1221,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                         if window.is_visible().unwrap_or(false) {
                             let _ = window.hide();
                             finish_palette_preview(app);
-                            if let Some(account) = app.get_webview_window("account-switcher") {
-                                let _ = account.hide();
-                            }
+                            let _ = hide_account_switcher(app);
                         } else {
                             let _ = window.show();
                             let _ = window.set_focus();
@@ -1226,6 +1296,8 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            finish_palette_preview(app);
+            let _ = hide_account_switcher(app);
             if let Some(window) = app.get_webview_window("widget") {
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -1260,7 +1332,8 @@ pub fn run() {
                 preferences_path,
                 fetch_lock: tokio::sync::Mutex::new(()),
                 snapshot_cache: Mutex::new(None),
-                account_quota_cache: Mutex::new(HashMap::new()),
+                account_quota_state: Mutex::new(account_quota::AccountQuotaState::default()),
+                account_window_generation: AtomicU64::new(0),
                 account_generation: AtomicU64::new(0),
                 token_usage_cache: Arc::clone(&token_usage_cache),
                 palette_generation: AtomicU64::new(0),
@@ -1353,20 +1426,16 @@ pub fn run() {
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                if window.label() == "account-switcher" {
+                    let _ = hide_account_switcher(window.app_handle());
+                } else {
+                    let _ = window.hide();
+                }
                 if window.label() == "palette" || window.label() == "palette-editor" {
                     finish_palette_preview(window.app_handle());
-                } else if window.label() == "account-switcher" {
-                    let _ = window
-                        .app_handle()
-                        .emit_to("widget", "account-switcher-closed", ());
                 } else if window.label() == "widget" {
                     finish_palette_preview(window.app_handle());
-                    if let Some(account) =
-                        window.app_handle().get_webview_window("account-switcher")
-                    {
-                        let _ = account.hide();
-                    }
+                    let _ = hide_account_switcher(window.app_handle());
                 }
             }
         })
@@ -1409,19 +1478,6 @@ mod account_quota_tests {
     use super::*;
 
     #[test]
-    fn inactive_account_quota_cache_expires_at_exactly_five_minutes() {
-        let now = Instant::now();
-        assert!(inactive_account_quota_is_fresh(
-            now - Duration::from_secs(299),
-            now
-        ));
-        assert!(!inactive_account_quota_is_fresh(
-            now - Duration::from_secs(300),
-            now
-        ));
-    }
-
-    #[test]
     fn weekly_quota_uses_only_the_weekly_window() {
         let mut snapshot = ProviderSnapshot::failure("unavailable", "temporary");
         snapshot.status = "ok".into();
@@ -1434,6 +1490,19 @@ mod account_quota_tests {
         let quota = weekly_quota_from_snapshot("profile".into(), snapshot);
         assert_eq!(quota.remaining_percent, None);
         assert_eq!(quota.status, "unavailable");
+    }
+
+    #[test]
+    fn current_quota_finds_codex_when_snapshot_order_changes() {
+        let mut other = ProviderSnapshot::failure("unavailable", "other");
+        other.provider = "other".into();
+        let codex = ProviderSnapshot::failure("signed_out", "codex");
+        assert_eq!(
+            codex_snapshot(&[other, codex])
+                .expect("codex snapshot")
+                .provider,
+            "codex"
+        );
     }
 
     #[test]

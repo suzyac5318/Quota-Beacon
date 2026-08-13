@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   accountHandlers: null as null | {
     onOpened?: (theme: { percent: number | null; colors: string[] }) => void;
     onThemeChanged?: (theme: { percent: number | null; colors: string[] }) => void;
+    onClosed?: () => void;
     onSwitched?: () => void;
     onError?: (message: string) => void;
   },
@@ -38,6 +39,7 @@ vi.mock("../lib/accounts", async (importOriginal) => {
     listenAccountEvents: vi.fn(async (handlers: {
       onOpened?: (theme: { percent: number | null; colors: string[] }) => void;
       onThemeChanged?: (theme: { percent: number | null; colors: string[] }) => void;
+      onClosed?: () => void;
       onSwitched?: () => void;
       onError?: (message: string) => void;
     }) => { mocks.accountHandlers = handlers; return () => {}; }),
@@ -77,11 +79,23 @@ describe("AccountSwitcher", () => {
     ]);
 
     const view = render(<AccountSwitcher />);
+    await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());
+    act(() => mocks.accountHandlers?.onOpened?.({ percent: null, colors: [] }));
 
     expect(await view.findByText("周 65%")).not.toBeNull();
     expect(view.getAllByText("重新登录").length).toBeGreaterThan(0);
     expect(view.queryByText(/5\s*小时|分钟前|已过期/)).toBeNull();
     expect((view.getByRole("button", { name: "切换" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("does not query weekly quotas until the hidden account window opens", async () => {
+    render(<AccountSwitcher />);
+    await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());
+    expect(mocks.getAccountWeeklyQuotas).not.toHaveBeenCalled();
+
+    act(() => mocks.accountHandlers?.onOpened?.({ percent: null, colors: [] }));
+    await waitFor(() => expect(mocks.getAccountWeeklyQuotas).toHaveBeenCalledTimes(1));
+    act(() => mocks.accountHandlers?.onClosed?.());
   });
 
   it("uses the active five-hour quota theme and falls back to neutral glass", async () => {

@@ -34,6 +34,7 @@ export function AccountSwitcher() {
   const [notice, setNotice] = useState<{ id: number; kind: "error" | "info" | "success"; message: string } | null>(null);
   const [weeklyQuotas, setWeeklyQuotas] = useState<Map<string, AccountWeeklyQuota>>(() => new Map());
   const [windowTheme, setWindowTheme] = useState<AccountWindowTheme | null>(null);
+  const [windowOpen, setWindowOpen] = useState(false);
   const noticeSequence = useRef(0);
   const t = useMemo(() => accountCopy(language), [language]);
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -50,7 +51,14 @@ export function AccountSwitcher() {
     void listenAccountEvents({
       onVault: setVault,
       onSwitched: () => showNotice(t.switched, "success"),
-      onOpened: setWindowTheme,
+      onOpened: (theme) => {
+        setWindowTheme(theme);
+        setWindowOpen(true);
+      },
+      onClosed: () => {
+        setWindowOpen(false);
+        setWeeklyQuotas(new Map());
+      },
       onThemeChanged: setWindowTheme,
       onError: (message) => showNotice(message),
     }).then((unlisten) => { if (cancelled) unlisten(); else cleanup = unlisten; });
@@ -67,6 +75,7 @@ export function AccountSwitcher() {
   }, [notice]);
 
   useEffect(() => {
+    if (!windowOpen) return;
     let disposed = false;
     let inFlight = false;
     const refreshWeeklyQuotas = async () => {
@@ -84,7 +93,7 @@ export function AccountSwitcher() {
     void refreshWeeklyQuotas();
     const timer = window.setInterval(() => void refreshWeeklyQuotas(), 10_000);
     return () => { disposed = true; window.clearInterval(timer); };
-  }, [quotaScope]);
+  }, [quotaScope, windowOpen]);
 
   useEffect(() => {
     void setAccountSwitcherExpanded(addOpen || Boolean(notice), reducedMotion);
