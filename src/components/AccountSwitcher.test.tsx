@@ -17,9 +17,12 @@ const vault = {
 const mocks = vi.hoisted(() => ({
   getAccountVault: vi.fn(),
   getAccountWeeklyQuotas: vi.fn(),
+  beginAccountLogin: vi.fn(),
+  pollAccountLogin: vi.fn(),
   accountHandlers: null as null | {
     onOpened?: (theme: { percent: number | null; colors: string[] }) => void;
     onThemeChanged?: (theme: { percent: number | null; colors: string[] }) => void;
+    onClosed?: () => void;
     onSwitched?: () => void;
     onError?: (message: string) => void;
   },
@@ -35,9 +38,12 @@ vi.mock("../lib/accounts", async (importOriginal) => {
     ...actual,
     getAccountVault: mocks.getAccountVault,
     getAccountWeeklyQuotas: mocks.getAccountWeeklyQuotas,
+    beginAccountLogin: mocks.beginAccountLogin,
+    pollAccountLogin: mocks.pollAccountLogin,
     listenAccountEvents: vi.fn(async (handlers: {
       onOpened?: (theme: { percent: number | null; colors: string[] }) => void;
       onThemeChanged?: (theme: { percent: number | null; colors: string[] }) => void;
+      onClosed?: () => void;
       onSwitched?: () => void;
       onError?: (message: string) => void;
     }) => { mocks.accountHandlers = handlers; return () => {}; }),
@@ -58,6 +64,8 @@ describe("AccountSwitcher", () => {
     mocks.accountHandlers = null;
     mocks.getAccountVault.mockReset().mockResolvedValue(vault);
     mocks.getAccountWeeklyQuotas.mockReset().mockResolvedValue([]);
+    mocks.beginAccountLogin.mockReset().mockResolvedValue({ taskId: "login-task", status: "running", message: null });
+    mocks.pollAccountLogin.mockReset().mockResolvedValue({ taskId: "login-task", status: "running", message: null });
   });
 
   it("shows masked account metadata and keeps add fields collapsed by default", async () => {
@@ -77,6 +85,8 @@ describe("AccountSwitcher", () => {
     ]);
 
     const view = render(<AccountSwitcher />);
+    await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());
+    act(() => mocks.accountHandlers?.onOpened?.({ percent: null, colors: [] }));
 
     expect(await view.findByText("周 65%")).not.toBeNull();
     expect(view.getAllByText("重新登录").length).toBeGreaterThan(0);
@@ -105,6 +115,16 @@ describe("AccountSwitcher", () => {
     expect((view.getByRole("button", { name: "删除" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it("does not query weekly quotas until the hidden account window opens", async () => {
+    render(<AccountSwitcher />);
+    await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());
+    expect(mocks.getAccountWeeklyQuotas).not.toHaveBeenCalled();
+
+    act(() => mocks.accountHandlers?.onOpened?.({ percent: null, colors: [] }));
+    await waitFor(() => expect(mocks.getAccountWeeklyQuotas).toHaveBeenCalledTimes(1));
+    act(() => mocks.accountHandlers?.onClosed?.());
+  });
+
   it("uses the active five-hour quota theme and falls back to neutral glass", async () => {
     const view = render(<AccountSwitcher />);
     await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());
@@ -121,6 +141,53 @@ describe("AccountSwitcher", () => {
     act(() => mocks.accountHandlers?.onThemeChanged?.({ percent: null, colors: [] }));
     expect(shell.classList.contains("account-switcher--neutral")).toBe(true);
     expect(shell.style.getPropertyValue("--card-base")).toBe("");
+  });
+
+  it("resets finished form state and notices when the window reopens", async () => {
+    const view = render(<AccountSwitcher />);
+    await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());
+    act(() => mocks.accountHandlers?.onOpened?.({ percent: null, colors: [] }));
+    fireEvent.click(view.getByLabelText("添加账号"));
+    fireEvent.change(view.getByLabelText("账号名称"), { target: { value: "临时名称" } });
+    act(() => mocks.accountHandlers?.onError?.("旧提示"));
+    expect(view.getByText("旧提示")).not.toBeNull();
+
+    act(() => mocks.accountHandlers?.onClosed?.());
+    act(() => mocks.accountHandlers?.onOpened?.({ percent: null, colors: [] }));
+    expect(view.queryByLabelText("账号名称")).toBeNull();
+    expect(view.queryByText("旧提示")).toBeNull();
+  });
+
+  it("keeps only one login poll in flight during a slow operation", async () => {
+    let resolvePoll: ((value: { taskId: string; status: "running"; message: null }) => void) | undefined;
+    mocks.pollAccountLogin.mockImplementation(() => new Promise((resolve) => { resolvePoll = resolve; }));
+    const view = render(<AccountSwitcher />);
+    await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());
+    act(() => mocks.accountHandlers?.onOpened?.({ percent: null, colors: [] }));
+    fireEvent.click(view.getByLabelText("添加账号"));
+    const aliasInput = view.getByLabelText("账号名称");
+    fireEvent.change(aliasInput, { target: { value: "新账号" } });
+    fireEvent.submit(aliasInput.closest("form") as HTMLFormElement);
+    await waitFor(() => expect(mocks.beginAccountLogin).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => window.setTimeout(resolve, 1_650));
+    expect(mocks.pollAccountLogin).toHaveBeenCalledTimes(1);
+    await act(async () => resolvePoll?.({ taskId: "login-task", status: "running", message: null }));
+  });
+
+  it("keeps a running browser login visible after the account window reopens", async () => {
+    const view = render(<AccountSwitcher />);
+    await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());
+    act(() => mocks.accountHandlers?.onOpened?.({ percent: null, colors: [] }));
+    fireEvent.click(view.getByLabelText("添加账号"));
+    const aliasInput = view.getByLabelText("账号名称");
+    fireEvent.change(aliasInput, { target: { value: "新账号" } });
+    fireEvent.submit(aliasInput.closest("form") as HTMLFormElement);
+    await waitFor(() => expect(mocks.beginAccountLogin).toHaveBeenCalledTimes(1));
+
+    act(() => mocks.accountHandlers?.onClosed?.());
+    act(() => mocks.accountHandlers?.onOpened?.({ percent: null, colors: [] }));
+    expect(view.getByText("请在浏览器中完成官方 Codex 登录。")).not.toBeNull();
+    expect(view.getByRole("button", { name: "取消登录" })).not.toBeNull();
   });
 
   it("dismisses switch success after ten seconds without clearing a later error", async () => {

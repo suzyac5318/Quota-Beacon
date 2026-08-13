@@ -2699,11 +2699,12 @@ dependencies = [
 
 [[package]]
 name = "quota-beacon"
-version = "1.9.2"
+version = "1.9.4"
 dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs 6.0.0",
+ "futures-util",
  "reqwest 0.12.28",
  "security-framework",
  "serde",

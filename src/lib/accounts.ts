@@ -1,5 +1,6 @@
 import type { Language } from "../types";
 import { isTauri } from "./bridge";
+import { createLatestRequestGate } from "./latestRequest";
 
 export type AccountCredentialStatus = "ready" | "invalid" | "missing" | "locked" | "denied" | "unavailable";
 
@@ -130,11 +131,15 @@ export async function closeAccountSwitcher(): Promise<void> {
   await invoke("close_account_switcher");
 }
 
+const accountSizeAnimationGate = createLatestRequestGate();
+
 export async function setAccountSwitcherExpanded(expanded: boolean, reducedMotion = false): Promise<void> {
   if (!isTauri()) return;
+  const generation = accountSizeAnimationGate.begin();
   const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
   const appWindow = getCurrentWindow();
   const targetHeight = expanded ? 280 : 240;
+  if (!accountSizeAnimationGate.isCurrent(generation)) return;
   if (reducedMotion) {
     await appWindow.setSize(new LogicalSize(320, targetHeight));
     return;
@@ -143,9 +148,11 @@ export async function setAccountSwitcherExpanded(expanded: boolean, reducedMotio
   const start = (await appWindow.innerSize()).height / scale;
   const startedAt = performance.now();
   while (true) {
+    if (!accountSizeAnimationGate.isCurrent(generation)) return;
     const progress = Math.min(1, (performance.now() - startedAt) / 220);
     const eased = 1 - Math.pow(1 - progress, 3);
     await appWindow.setSize(new LogicalSize(320, start + (targetHeight - start) * eased));
+    if (!accountSizeAnimationGate.isCurrent(generation)) return;
     if (progress >= 1) return;
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }

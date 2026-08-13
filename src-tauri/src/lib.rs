@@ -1,3 +1,4 @@
+mod account_quota;
 mod account_vault;
 mod codex;
 mod codex_overlay;
@@ -5,7 +6,7 @@ mod models;
 mod token_usage;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -17,6 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use futures_util::{stream, StreamExt};
 use models::{AccountWeeklyQuota, ProviderSnapshot, TokenUsageSummary, WidgetPreferences};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, Submenu},
@@ -32,20 +34,16 @@ struct AppState {
     preferences_path: PathBuf,
     fetch_lock: tokio::sync::Mutex<()>,
     snapshot_cache: Mutex<Option<(Instant, Vec<ProviderSnapshot>)>>,
-    account_quota_cache: Mutex<HashMap<String, (Instant, AccountWeeklyQuota)>>,
+    account_quota_state: Mutex<account_quota::AccountQuotaState>,
+    account_window_generation: AtomicU64,
     account_generation: AtomicU64,
     token_usage_cache: Arc<Mutex<token_usage::TokenUsageCache>>,
     palette_generation: AtomicU64,
     account_vault: Mutex<account_vault::AccountVault>,
     account_switch_lock: tokio::sync::Mutex<()>,
     account_login_task: Mutex<Option<AccountLoginTask>>,
+    account_login_results: Mutex<HashMap<String, (Instant, AccountLoginStatus)>>,
     account_login_root: PathBuf,
-}
-
-const INACTIVE_ACCOUNT_QUOTA_TTL: Duration = Duration::from_secs(5 * 60);
-
-fn inactive_account_quota_is_fresh(updated_at: Instant, now: Instant) -> bool {
-    now.saturating_duration_since(updated_at) < INACTIVE_ACCOUNT_QUOTA_TTL
 }
 
 struct AccountLoginTask {
@@ -57,7 +55,7 @@ struct AccountLoginTask {
     started_at: Instant,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AccountLoginStatus {
     task_id: String,
@@ -449,13 +447,18 @@ fn publish_account_vault(
     Ok(view)
 }
 
-fn invalidate_reconciled_account(state: &AppState) {
+fn invalidate_reconciled_account(
+    state: &AppState,
+    view: &account_vault::AccountVaultView,
+) {
     state.account_generation.fetch_add(1, Ordering::SeqCst);
     if let Ok(mut cache) = state.snapshot_cache.lock() {
         *cache = None;
     }
-    if let Ok(mut cache) = state.account_quota_cache.lock() {
-        cache.clear();
+    if let Ok(mut quota_state) = state.account_quota_state.lock() {
+        for profile in &view.profiles {
+            quota_state.invalidate(&profile.id);
+        }
     }
 }
 
@@ -466,7 +469,7 @@ fn reconciled_account_vault(state: &AppState) -> Result<account_vault::AccountVa
         .map_err(|_| "Account storage is busy.".to_string())?
         .reconcile_view()?;
     if changed {
-        invalidate_reconciled_account(state);
+        invalidate_reconciled_account(state, &view);
     }
     Ok(view)
 }
@@ -504,27 +507,37 @@ fn weekly_quota_from_snapshot(
     }
 }
 
+fn codex_snapshot(snapshots: &[ProviderSnapshot]) -> Option<ProviderSnapshot> {
+    snapshots
+        .iter()
+        .find(|snapshot| snapshot.provider == "codex")
+        .cloned()
+}
+
 #[tauri::command]
 async fn get_account_weekly_quotas(
     state: State<'_, AppState>,
 ) -> Result<Vec<AccountWeeklyQuota>, String> {
+    let window_generation = state.account_window_generation.load(Ordering::SeqCst);
     let vault_view = reconciled_account_vault(state.inner())?;
     let profile_ids = vault_view
         .profiles
         .iter()
         .map(|profile| profile.id.clone())
         .collect::<Vec<_>>();
-    if let Ok(mut cache) = state.account_quota_cache.lock() {
-        cache.retain(|profile_id, _| profile_ids.contains(profile_id));
+    let existing_profile_ids = profile_ids.iter().cloned().collect::<HashSet<_>>();
+    if let Ok(mut quota_state) = state.account_quota_state.lock() {
+        quota_state.prune(&existing_profile_ids);
     }
 
     let mut quotas = Vec::with_capacity(profile_ids.len());
+    let mut requests = Vec::new();
     for profile_id in profile_ids {
         if vault_view.active_profile_id.as_deref() == Some(profile_id.as_str()) {
             let snapshot = state.snapshot_cache.lock().ok().and_then(|cache| {
                 cache
                     .as_ref()
-                    .and_then(|(_, values)| values.first().cloned())
+                    .and_then(|(_, values)| codex_snapshot(values))
             });
             quotas.push(match snapshot {
                 Some(snapshot) => weekly_quota_from_snapshot(profile_id, snapshot),
@@ -540,51 +553,79 @@ async fn get_account_weekly_quotas(
 
         let now = Instant::now();
         let cached = state
-            .account_quota_cache
+            .account_quota_state
             .lock()
             .ok()
-            .and_then(|cache| cache.get(&profile_id).cloned())
-            .filter(|(updated_at, _)| inactive_account_quota_is_fresh(*updated_at, now))
-            .map(|(_, quota)| quota);
+            .and_then(|mut quota_state| quota_state.get_fresh(&profile_id, now));
         if let Some(cached) = cached {
             quotas.push(cached);
             continue;
         }
 
-        let (credential_generation, credentials) = {
-            let vault = state
-                .account_vault
-                .lock()
-                .map_err(|_| "Account storage is busy.".to_string())?;
-            let credentials = vault.read_profile_credentials(&profile_id);
-            (state.account_generation.load(Ordering::SeqCst), credentials)
-        };
-        let quota = match credentials {
-            Ok(raw) => weekly_quota_from_snapshot(
-                profile_id.clone(),
-                codex::fetch_snapshot_from_bytes(&state.client, &raw).await,
-            ),
-            Err(message) => AccountWeeklyQuota {
+        let generation = state
+            .account_quota_state
+            .lock()
+            .map_err(|_| "Account quota cache is busy.".to_string())?
+            .generation(&profile_id);
+        let credentials = state
+            .account_vault
+            .lock()
+            .map_err(|_| "Account storage is busy.".to_string())?
+            .read_profile_credentials(&profile_id);
+        match credentials {
+            Ok(raw) => requests.push((profile_id, generation, raw)),
+            Err(message) => quotas.push(AccountWeeklyQuota {
                 profile_id: profile_id.clone(),
                 remaining_percent: None,
                 status: "signed_out".into(),
                 message: Some(message),
-            },
-        };
-        if account_response_is_current(credential_generation, &state.account_generation) {
-            if let Ok(mut cache) = state.account_quota_cache.lock() {
-                cache.insert(profile_id, (Instant::now(), quota.clone()));
-            }
-            quotas.push(quota);
-        } else {
-            quotas.push(AccountWeeklyQuota {
-                profile_id,
-                remaining_percent: None,
-                status: "loading".into(),
-                message: None,
-            });
+            }),
         }
     }
+
+    let client = state.client.clone();
+    let fetched = stream::iter(requests.into_iter().map(|(profile_id, generation, raw)| {
+        let client = client.clone();
+        async move {
+            let snapshot = codex::fetch_weekly_snapshot_from_bytes(&client, &raw).await;
+            (
+                profile_id.clone(),
+                generation,
+                weekly_quota_from_snapshot(profile_id, snapshot),
+            )
+        }
+    }))
+    .buffer_unordered(3)
+    .collect::<Vec<_>>()
+    .await;
+
+    for (profile_id, generation, quota) in fetched {
+        if state.account_window_generation.load(Ordering::SeqCst) != window_generation {
+            continue;
+        }
+        let inserted = state
+            .account_quota_state
+            .lock()
+            .map(|mut quota_state| {
+                quota_state.insert_if_current(
+                    &profile_id,
+                    generation,
+                    quota.clone(),
+                    Instant::now(),
+                )
+            })
+            .unwrap_or(false);
+        if inserted {
+            quotas.push(quota);
+        }
+    }
+    quotas.sort_by_key(|quota| {
+        vault_view
+            .profiles
+            .iter()
+            .position(|profile| profile.id == quota.profile_id)
+            .unwrap_or(usize::MAX)
+    });
     Ok(quotas)
 }
 
@@ -599,9 +640,9 @@ fn save_current_account(
         .lock()
         .map_err(|_| "Account storage is busy.".to_string())?
         .save_current(&alias)?;
-    if let Ok(mut cache) = state.account_quota_cache.lock() {
+    if let Ok(mut quota_state) = state.account_quota_state.lock() {
         if let Some(profile_id) = &view.active_profile_id {
-            cache.remove(profile_id);
+            quota_state.invalidate(profile_id);
         }
     }
     state.account_generation.fetch_add(1, Ordering::SeqCst);
@@ -640,8 +681,8 @@ fn delete_account(
         .lock()
         .map_err(|_| "Account storage is busy.".to_string())?
         .delete(&profile_id)?;
-    if let Ok(mut cache) = state.account_quota_cache.lock() {
-        cache.remove(&profile_id);
+    if let Ok(mut quota_state) = state.account_quota_state.lock() {
+        quota_state.invalidate(&profile_id);
     }
     state.account_generation.fetch_add(1, Ordering::SeqCst);
     let _ = app.emit_to("widget", "account-vault-changed", view.clone());
@@ -664,8 +705,8 @@ async fn switch_account_internal(
         .lock()
         .map_err(|_| "Account storage is busy.".to_string())?
         .switch_to(profile_id)?;
-    if let Ok(mut cache) = state.account_quota_cache.lock() {
-        cache.remove(profile_id);
+    if let Ok(mut quota_state) = state.account_quota_state.lock() {
+        quota_state.invalidate(profile_id);
     }
     state.account_generation.fetch_add(1, Ordering::SeqCst);
     if let Ok(mut cache) = state.snapshot_cache.lock() {
@@ -775,6 +816,31 @@ fn secure_login_auth_file(_: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn completed_login_status(
+    results: &Mutex<HashMap<String, (Instant, AccountLoginStatus)>>,
+    task_id: &str,
+) -> Option<AccountLoginStatus> {
+    let now = Instant::now();
+    results.lock().ok().and_then(|mut results| {
+        results.retain(|_, (completed_at, _)| {
+            now.saturating_duration_since(*completed_at) < Duration::from_secs(10 * 60)
+        });
+        results.get(task_id).map(|(_, status)| status.clone())
+    })
+}
+
+fn remember_login_status(
+    results: &Mutex<HashMap<String, (Instant, AccountLoginStatus)>>,
+    status: &AccountLoginStatus,
+) {
+    if status.status == "running" {
+        return;
+    }
+    if let Ok(mut results) = results.lock() {
+        results.insert(status.task_id.clone(), (Instant::now(), status.clone()));
+    }
+}
+
 #[tauri::command]
 fn begin_account_login(
     alias: String,
@@ -843,6 +909,9 @@ fn poll_account_login(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AccountLoginStatus, String> {
+    if let Some(status) = completed_login_status(&state.account_login_results, &task_id) {
+        return Ok(status);
+    }
     let mut slot = state
         .account_login_task
         .lock()
@@ -858,11 +927,13 @@ fn poll_account_login(
         let _ = task.child.kill();
         let _ = task.child.wait();
         cleanup_login_task(&state.account_login_root, &task.task_root);
-        return Ok(AccountLoginStatus {
+        let status = AccountLoginStatus {
             task_id,
             status: "failed",
             message: Some("Codex login timed out after 10 minutes.".into()),
-        });
+        };
+        remember_login_status(&state.account_login_results, &status);
+        return Ok(status);
     }
     let Some(exit) = task
         .child
@@ -878,11 +949,13 @@ fn poll_account_login(
     let task = slot.take().expect("login task was checked");
     if !exit.success() {
         cleanup_login_task(&state.account_login_root, &task.task_root);
-        return Ok(AccountLoginStatus {
+        let status = AccountLoginStatus {
             task_id,
             status: "failed",
             message: Some("Codex login was cancelled or did not complete.".into()),
-        });
+        };
+        remember_login_status(&state.account_login_results, &status);
+        return Ok(status);
     }
     let auth_path = task.task_root.join("codex-home/auth.json");
     if let Err(message) = secure_login_auth_file(&auth_path) {
@@ -897,11 +970,13 @@ fn poll_account_login(
         Ok(value) => value,
         Err(message) => {
             cleanup_login_task(&state.account_login_root, &task.task_root);
-            return Ok(AccountLoginStatus {
+            let status = AccountLoginStatus {
                 task_id,
                 status: "failed",
                 message: Some(message.into()),
-            });
+            };
+            remember_login_status(&state.account_login_results, &status);
+            return Ok(status);
         }
     };
     let result = {
@@ -919,11 +994,11 @@ fn poll_account_login(
         }
     };
     cleanup_login_task(&state.account_login_root, &task.task_root);
-    match result {
+    let status = match result {
         Ok((view, current_login_replaced)) => {
             if let Some(profile_id) = task.replace_profile_id.as_deref() {
-                if let Ok(mut cache) = state.account_quota_cache.lock() {
-                    cache.remove(profile_id);
+                if let Ok(mut quota_state) = state.account_quota_state.lock() {
+                    quota_state.invalidate(profile_id);
                 }
                 state.account_generation.fetch_add(1, Ordering::SeqCst);
                 if current_login_replaced {
@@ -936,18 +1011,20 @@ fn poll_account_login(
             let _ = app.emit_to("widget", "account-vault-changed", view.clone());
             let _ = app.emit_to("account-switcher", "account-vault-changed", view);
             let _ = refresh_tray_menu(&app);
-            Ok(AccountLoginStatus {
+            AccountLoginStatus {
                 task_id,
                 status: "completed",
                 message: None,
-            })
+            }
         }
-        Err(message) => Ok(AccountLoginStatus {
+        Err(message) => AccountLoginStatus {
             task_id,
             status: "failed",
             message: Some(message),
-        }),
-    }
+        },
+    };
+    remember_login_status(&state.account_login_results, &status);
+    Ok(status)
 }
 
 #[tauri::command]
@@ -966,7 +1043,56 @@ fn cancel_account_login(task_id: String, state: State<'_, AppState>) -> Result<(
     let _ = task.child.kill();
     let _ = task.child.wait();
     cleanup_login_task(&state.account_login_root, &task.task_root);
+    remember_login_status(
+        &state.account_login_results,
+        &AccountLoginStatus {
+            task_id,
+            status: "failed",
+            message: Some("Codex login was cancelled.".into()),
+        },
+    );
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PhysicalRect {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+fn clamp_axis(value: i32, start: i32, span: u32, item_span: u32) -> i32 {
+    let end = start.saturating_add(span as i32);
+    let max = end.saturating_sub(item_span as i32).max(start);
+    value.clamp(start, max)
+}
+
+fn account_window_position(
+    widget: PhysicalRect,
+    account_width: u32,
+    account_height: u32,
+    work_area: PhysicalRect,
+    gap: i32,
+) -> (i32, i32) {
+    let x = clamp_axis(widget.x, work_area.x, work_area.width, account_width);
+    let below = widget
+        .y
+        .saturating_add(widget.height as i32)
+        .saturating_add(gap);
+    let above = widget
+        .y
+        .saturating_sub(account_height as i32)
+        .saturating_sub(gap);
+    let work_bottom = work_area.y.saturating_add(work_area.height as i32);
+    let y = if below.saturating_add(account_height as i32) <= work_bottom {
+        below
+    } else if above >= work_area.y {
+        above
+    } else {
+        clamp_axis(widget.y, work_area.y, work_area.height, account_height)
+    };
+    (x, y)
 }
 
 fn position_account_window(app: &AppHandle) -> Result<(), String> {
@@ -989,19 +1115,54 @@ fn position_account_window(app: &AppHandle) -> Result<(), String> {
         .ok()
         .flatten()
         .map(|monitor| *monitor.work_area());
-    let top = work_area.map(|area| area.position.y).unwrap_or(i32::MIN);
-    let bottom = work_area
-        .map(|area| area.position.y + area.size.height as i32)
-        .unwrap_or(i32::MAX);
-    let below = widget_position.y + widget_size.height as i32 + gap;
-    let y = if below + account_size.height as i32 <= bottom {
-        below
-    } else {
-        (widget_position.y - account_size.height as i32 - gap).max(top)
-    };
+    let work_area = work_area
+        .map(|area| PhysicalRect {
+            x: area.position.x,
+            y: area.position.y,
+            width: area.size.width,
+            height: area.size.height,
+        })
+        .unwrap_or(PhysicalRect {
+            x: widget_position.x,
+            y: i32::MIN / 4,
+            width: account_size.width,
+            height: u32::MAX / 2,
+        });
+    let (x, y) = account_window_position(
+        PhysicalRect {
+            x: widget_position.x,
+            y: widget_position.y,
+            width: widget_size.width,
+            height: widget_size.height,
+        },
+        account_size.width,
+        account_size.height,
+        work_area,
+        gap,
+    );
     account
-        .set_position(tauri::PhysicalPosition::new(widget_position.x, y))
+        .set_position(tauri::PhysicalPosition::new(x, y))
         .map_err(|error| format!("failed to position account window: {error}"))
+}
+
+fn hide_account_switcher(app: &AppHandle) -> Result<(), String> {
+    let account = app
+        .get_webview_window("account-switcher")
+        .ok_or_else(|| "account window missing".to_string())?;
+    if !account.is_visible().unwrap_or(false) {
+        return Ok(());
+    }
+    account
+        .hide()
+        .map_err(|error| format!("failed to hide account window: {error}"))?;
+    if let Some(state) = app.try_state::<AppState>() {
+        state
+            .account_window_generation
+            .fetch_add(1, Ordering::SeqCst);
+    }
+    let _ = app.emit_to("account-switcher", "account-switcher-closed", ());
+    let _ = app.emit_to("widget", "account-switcher-closed", ());
+    Ok(())
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -1059,14 +1220,26 @@ fn open_account_switcher(
     let account = app
         .get_webview_window("account-switcher")
         .ok_or_else(|| "account window missing".to_string())?;
-    let _ = app.emit_to("account-switcher", "account-switcher-opened", theme);
-    let _ = app.emit_to("widget", "account-switcher-opened", ());
     account
         .show()
         .map_err(|error| format!("failed to show account window: {error}"))?;
     let _ = account.set_always_on_top(true);
-    position_account_window(&app)?;
-    let view = publish_account_vault(&app, state.inner())?;
+    let opened = (|| {
+        position_account_window(&app)?;
+        publish_account_vault(&app, state.inner())
+    })();
+    let view = match opened {
+        Ok(view) => view,
+        Err(error) => {
+            let _ = hide_account_switcher(&app);
+            return Err(error);
+        }
+    };
+    state
+        .account_window_generation
+        .fetch_add(1, Ordering::SeqCst);
+    let _ = app.emit_to("account-switcher", "account-switcher-opened", theme);
+    let _ = app.emit_to("widget", "account-switcher-opened", ());
     let _ = account.set_focus();
     Ok(view)
 }
@@ -1082,14 +1255,7 @@ fn update_account_switcher_theme(app: AppHandle, theme: AccountWindowTheme) {
 
 #[tauri::command]
 fn close_account_switcher(app: AppHandle) -> Result<(), String> {
-    let account = app
-        .get_webview_window("account-switcher")
-        .ok_or_else(|| "account window missing".to_string())?;
-    account
-        .hide()
-        .map_err(|error| format!("failed to hide account window: {error}"))?;
-    let _ = app.emit_to("widget", "account-switcher-closed", ());
-    Ok(())
+    hide_account_switcher(&app)
 }
 
 fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -1230,9 +1396,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                         if window.is_visible().unwrap_or(false) {
                             let _ = window.hide();
                             finish_palette_preview(app);
-                            if let Some(account) = app.get_webview_window("account-switcher") {
-                                let _ = account.hide();
-                            }
+                            let _ = hide_account_switcher(app);
                         } else {
                             let _ = window.show();
                             let _ = window.set_focus();
@@ -1307,6 +1471,8 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            finish_palette_preview(app);
+            let _ = hide_account_switcher(app);
             if let Some(window) = app.get_webview_window("widget") {
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -1341,13 +1507,15 @@ pub fn run() {
                 preferences_path,
                 fetch_lock: tokio::sync::Mutex::new(()),
                 snapshot_cache: Mutex::new(None),
-                account_quota_cache: Mutex::new(HashMap::new()),
+                account_quota_state: Mutex::new(account_quota::AccountQuotaState::default()),
+                account_window_generation: AtomicU64::new(0),
                 account_generation: AtomicU64::new(0),
                 token_usage_cache: Arc::clone(&token_usage_cache),
                 palette_generation: AtomicU64::new(0),
                 account_vault: Mutex::new(account_vault::AccountVault::load(accounts_root)),
                 account_switch_lock: tokio::sync::Mutex::new(()),
                 account_login_task: Mutex::new(None),
+                account_login_results: Mutex::new(HashMap::new()),
                 account_login_root,
             });
             codex_overlay::start(app.handle().clone(), token_usage_cache);
@@ -1434,20 +1602,16 @@ pub fn run() {
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                if window.label() == "account-switcher" {
+                    let _ = hide_account_switcher(window.app_handle());
+                } else {
+                    let _ = window.hide();
+                }
                 if window.label() == "palette" || window.label() == "palette-editor" {
                     finish_palette_preview(window.app_handle());
-                } else if window.label() == "account-switcher" {
-                    let _ = window
-                        .app_handle()
-                        .emit_to("widget", "account-switcher-closed", ());
                 } else if window.label() == "widget" {
                     finish_palette_preview(window.app_handle());
-                    if let Some(account) =
-                        window.app_handle().get_webview_window("account-switcher")
-                    {
-                        let _ = account.hide();
-                    }
+                    let _ = hide_account_switcher(window.app_handle());
                 }
             }
         })
@@ -1486,21 +1650,76 @@ mod account_generation_tests {
 }
 
 #[cfg(test)]
-mod account_quota_tests {
+mod account_window_tests {
     use super::*;
 
-    #[test]
-    fn inactive_account_quota_cache_expires_at_exactly_five_minutes() {
-        let now = Instant::now();
-        assert!(inactive_account_quota_is_fresh(
-            now - Duration::from_secs(299),
-            now
-        ));
-        assert!(!inactive_account_quota_is_fresh(
-            now - Duration::from_secs(300),
-            now
-        ));
+    fn rect(x: i32, y: i32, width: u32, height: u32) -> PhysicalRect {
+        PhysicalRect {
+            x,
+            y,
+            width,
+            height,
+        }
     }
+
+    #[test]
+    fn clamps_account_window_to_right_and_left_monitor_edges() {
+        let work = rect(0, 24, 1440, 876);
+        assert_eq!(
+            account_window_position(rect(1380, 100, 100, 100), 320, 240, work, 8),
+            (1120, 208)
+        );
+        assert_eq!(
+            account_window_position(rect(-80, 100, 100, 100), 320, 240, work, 8),
+            (0, 208)
+        );
+    }
+
+    #[test]
+    fn supports_negative_coordinate_monitors_and_chooses_above_near_the_dock() {
+        let work = rect(-1920, 24, 1920, 1056);
+        assert_eq!(
+            account_window_position(rect(-1900, 900, 100, 100), 320, 240, work, 16),
+            (-1900, 644)
+        );
+    }
+
+    #[test]
+    fn clamps_when_neither_above_nor_below_has_enough_space() {
+        let work = rect(0, 24, 800, 300);
+        assert_eq!(
+            account_window_position(rect(200, 80, 100, 100), 320, 280, work, 8),
+            (200, 44)
+        );
+    }
+
+    #[test]
+    fn completed_login_status_is_idempotent_for_repeated_polls() {
+        let results = Mutex::new(HashMap::new());
+        let status = AccountLoginStatus {
+            task_id: "task".into(),
+            status: "completed",
+            message: None,
+        };
+        remember_login_status(&results, &status);
+        assert_eq!(
+            completed_login_status(&results, "task")
+                .expect("completed status")
+                .status,
+            "completed"
+        );
+        assert_eq!(
+            completed_login_status(&results, "task")
+                .expect("same completed status")
+                .status,
+            "completed"
+        );
+    }
+}
+
+#[cfg(test)]
+mod account_quota_tests {
+    use super::*;
 
     #[test]
     fn weekly_quota_uses_only_the_weekly_window() {
@@ -1515,6 +1734,19 @@ mod account_quota_tests {
         let quota = weekly_quota_from_snapshot("profile".into(), snapshot);
         assert_eq!(quota.remaining_percent, None);
         assert_eq!(quota.status, "unavailable");
+    }
+
+    #[test]
+    fn current_quota_finds_codex_when_snapshot_order_changes() {
+        let mut other = ProviderSnapshot::failure("unavailable", "other");
+        other.provider = "other".into();
+        let codex = ProviderSnapshot::failure("signed_out", "codex");
+        assert_eq!(
+            codex_snapshot(&[other, codex])
+                .expect("codex snapshot")
+                .provider,
+            "codex"
+        );
     }
 
     #[test]
