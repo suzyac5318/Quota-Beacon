@@ -84,6 +84,27 @@ describe("AccountSwitcher", () => {
     expect((view.getByRole("button", { name: "切换" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("distinguishes a locked keychain from credentials that need re-login", async () => {
+    mocks.getAccountVault.mockResolvedValue({
+      profiles: [
+        { id: "locked", alias: "工作号", maskedEmail: "w***@example.com", isActive: false, credentialStatus: "locked" },
+      ],
+      activeProfileId: null,
+      hasCurrentLogin: false,
+      currentLoginSaved: false,
+    });
+    mocks.getAccountWeeklyQuotas.mockResolvedValue([
+      { profileId: "locked", remainingPercent: null, status: "signed_out", message: "Keychain locked" },
+    ]);
+
+    const view = render(<AccountSwitcher />);
+
+    expect(await view.findByText("钥匙串已锁定")).not.toBeNull();
+    expect(view.queryByRole("button", { name: "重新登录" })).toBeNull();
+    expect((view.getByRole("button", { name: "切换" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((view.getByRole("button", { name: "删除" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("uses the active five-hour quota theme and falls back to neutral glass", async () => {
     const view = render(<AccountSwitcher />);
     await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());

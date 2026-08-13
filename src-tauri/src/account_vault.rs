@@ -15,8 +15,55 @@ const KEYCHAIN_SERVICE: &str = "app.quotabeacon.desktop.accounts";
 const STATE_FILE: &str = "vault.json";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 enum SecretError {
+    Missing,
+    Locked,
+    PermissionDenied,
+    Corrupt,
     Unavailable,
+}
+
+impl SecretError {
+    fn read_message(&self) -> &'static str {
+        match self {
+            Self::Missing => "Saved credentials are missing. Sign in again.",
+            Self::Locked => "macOS Keychain is locked. Unlock it and try again.",
+            Self::PermissionDenied => "macOS Keychain denied access to this account.",
+            Self::Corrupt => "Saved credentials are damaged. Sign in again.",
+            Self::Unavailable => "macOS Keychain is unavailable.",
+        }
+    }
+
+    fn write_message(&self) -> &'static str {
+        match self {
+            Self::Locked => "macOS Keychain is locked. Unlock it and try again.",
+            Self::PermissionDenied => "macOS Keychain denied this change.",
+            Self::Corrupt => "macOS Keychain returned damaged account data.",
+            Self::Missing | Self::Unavailable => "macOS Keychain is unavailable.",
+        }
+    }
+
+    fn credential_status(&self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Locked => "locked",
+            Self::PermissionDenied => "denied",
+            Self::Corrupt => "invalid",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn classify_keychain_error(error: security_framework::base::Error) -> SecretError {
+    match error.code() {
+        -25300 => SecretError::Missing,          // errSecItemNotFound
+        -25308 => SecretError::Locked,           // errSecInteractionNotAllowed
+        -25293 => SecretError::PermissionDenied, // errSecAuthFailed
+        -26275 => SecretError::Corrupt,          // errSecDecode
+        _ => SecretError::Unavailable,
+    }
 }
 
 trait SecretStore: Send + Sync {
@@ -32,17 +79,17 @@ struct PlatformSecretStore;
 impl SecretStore for PlatformSecretStore {
     fn set(&self, account: &str, secret: &[u8]) -> Result<(), SecretError> {
         security_framework::passwords::set_generic_password(KEYCHAIN_SERVICE, account, secret)
-            .map_err(|_| SecretError::Unavailable)
+            .map_err(classify_keychain_error)
     }
 
     fn get(&self, account: &str) -> Result<Vec<u8>, SecretError> {
         security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, account)
-            .map_err(|_| SecretError::Unavailable)
+            .map_err(classify_keychain_error)
     }
 
     fn delete(&self, account: &str) -> Result<(), SecretError> {
         security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, account)
-            .map_err(|_| SecretError::Unavailable)
+            .map_err(classify_keychain_error)
     }
 }
 
@@ -115,6 +162,11 @@ pub struct AccountVault {
     secrets: Arc<dyn SecretStore>,
 }
 
+pub struct ReplaceCredentialsOutcome {
+    pub view: AccountVaultView,
+    pub current_login_replaced: bool,
+}
+
 impl AccountVault {
     pub fn load(root: PathBuf) -> Self {
         let auth_path = codex::auth_path().unwrap_or_else(|| root.join("missing-auth.json"));
@@ -140,27 +192,50 @@ impl AccountVault {
         }
     }
 
-    pub fn view(&self) -> Result<AccountVaultView, String> {
+    pub fn view(&mut self) -> Result<AccountVaultView, String> {
+        self.reconcile_view().map(|(view, _)| view)
+    }
+
+    pub fn reconcile_view(&mut self) -> Result<(AccountVaultView, bool), String> {
         self.ensure_state_ready()?;
         let current = self.current_identity().ok();
         let current_fingerprint = current.as_ref().map(fingerprint);
+        let reconciled_active = current_fingerprint.as_ref().and_then(|value| {
+            self.state
+                .profiles
+                .iter()
+                .find(|profile| &profile.fingerprint == value)
+                .map(|profile| profile.id.clone())
+        });
+        let active_changed = self.state.active_profile_id != reconciled_active;
+        if active_changed {
+            let previous_state = self.state.clone();
+            self.state.active_profile_id = reconciled_active;
+            if let Err(error) = self.persist_state() {
+                self.state = previous_state;
+                return Err(error);
+            }
+        }
         let profiles = self
             .state
             .profiles
             .iter()
             .map(|profile| self.profile_view(profile))
             .collect();
-        Ok(AccountVaultView {
-            profiles,
-            active_profile_id: self.state.active_profile_id.clone(),
-            has_current_login: current.is_some(),
-            current_login_saved: current_fingerprint.is_some_and(|value| {
-                self.state
-                    .profiles
-                    .iter()
-                    .any(|profile| profile.fingerprint == value)
-            }),
-        })
+        Ok((
+            AccountVaultView {
+                profiles,
+                active_profile_id: self.state.active_profile_id.clone(),
+                has_current_login: current.is_some(),
+                current_login_saved: current_fingerprint.is_some_and(|value| {
+                    self.state
+                        .profiles
+                        .iter()
+                        .any(|profile| profile.fingerprint == value)
+                }),
+            },
+            active_changed,
+        ))
     }
 
     pub fn save_current(&mut self, alias: &str) -> Result<AccountVaultView, String> {
@@ -183,7 +258,7 @@ impl AccountVault {
             previous_secret = self.secrets.get(&id).ok();
             self.secrets
                 .set(&id, &raw)
-                .map_err(|_| "macOS Keychain could not save this account.".to_string())?;
+                .map_err(|error| error.write_message().to_string())?;
             self.state.profiles[index].alias = alias;
             self.state.profiles[index].masked_email = identity.email.as_deref().map(mask_email);
             self.state.active_profile_id = Some(id);
@@ -192,7 +267,7 @@ impl AccountVault {
             let id = uuid::Uuid::new_v4().to_string();
             self.secrets
                 .set(&id, &raw)
-                .map_err(|_| "macOS Keychain could not save this account.".to_string())?;
+                .map_err(|error| error.write_message().to_string())?;
             self.state.profiles.push(AccountProfile {
                 id: id.clone(),
                 alias,
@@ -208,11 +283,11 @@ impl AccountVault {
         }
         if let Err(error) = self.persist_state() {
             self.state = previous_state;
-            let restored = if let Some(secret) = previous_secret {
-                self.secrets.set(&touched_id, &secret).is_ok()
-            } else {
-                self.secrets.delete(&touched_id).is_ok()
-            };
+            let restored = restore_secret(
+                self.secrets.as_ref(),
+                &touched_id,
+                previous_secret.as_deref(),
+            );
             if !restored {
                 return Err(format!(
                     "{error} Keychain rollback also failed; account recovery requires attention."
@@ -246,7 +321,7 @@ impl AccountVault {
         let id = uuid::Uuid::new_v4().to_string();
         self.secrets
             .set(&id, raw)
-            .map_err(|_| "macOS Keychain could not save this account.".to_string())?;
+            .map_err(|error| error.write_message().to_string())?;
         self.state.profiles.push(AccountProfile {
             id,
             alias,
@@ -255,7 +330,7 @@ impl AccountVault {
         });
         if let Err(error) = self.persist_state() {
             if let Some(profile) = self.state.profiles.pop() {
-                if self.secrets.delete(&profile.id).is_err() {
+                if !restore_secret(self.secrets.as_ref(), &profile.id, None) {
                     return Err(format!(
                         "{error} Keychain cleanup also failed; account recovery requires attention."
                     ));
@@ -270,8 +345,9 @@ impl AccountVault {
         &mut self,
         profile_id: &str,
         raw: &[u8],
-    ) -> Result<AccountVaultView, String> {
+    ) -> Result<ReplaceCredentialsOutcome, String> {
         self.ensure_state_ready()?;
+        self.reconcile_view()?;
         if raw.len() as u64 > codex::MAX_AUTH_BYTES {
             return Err("Codex login data is too large.".into());
         }
@@ -285,34 +361,93 @@ impl AccountVault {
         {
             return Err("This Codex account is already saved.".into());
         }
+        let current_login_replaced = self.state.active_profile_id.as_deref() == Some(profile_id);
         let previous_state = self.state.clone();
-        let previous_secret = self.secrets.get(profile_id).ok();
-        let profile = self
+        let previous_secret = match self.secrets.get(profile_id) {
+            Ok(secret) => Some(secret),
+            Err(SecretError::Missing) => None,
+            Err(error) => return Err(error.read_message().into()),
+        };
+        let previous_auth = if current_login_replaced {
+            Some(
+                read_regular_file(&self.auth_path, codex::MAX_AUTH_BYTES)
+                    .map_err(|_| "Current Codex login is unavailable.".to_string())?,
+            )
+        } else {
+            None
+        };
+        if !self
+            .state
+            .profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .is_some()
+        {
+            return Err("Saved account was not found.".into());
+        }
+        self.secrets
+            .set(profile_id, raw)
+            .map_err(|error| error.write_message().to_string())?;
+        if current_login_replaced {
+            if let Err(error) = atomic_replace(&self.auth_path, raw) {
+                if !restore_secret(
+                    self.secrets.as_ref(),
+                    profile_id,
+                    previous_secret.as_deref(),
+                ) {
+                    return Err(format!(
+                        "{error} Keychain rollback also failed; account recovery requires attention."
+                    ));
+                }
+                return Err(error);
+            }
+            let committed = read_regular_file(&self.auth_path, codex::MAX_AUTH_BYTES)
+                .is_ok_and(|value| value == raw);
+            if !committed {
+                let auth_restored = restore_login(&self.auth_path, previous_auth.as_deref());
+                let keychain_restored = restore_secret(
+                    self.secrets.as_ref(),
+                    profile_id,
+                    previous_secret.as_deref(),
+                );
+                if !auth_restored || !keychain_restored {
+                    return Err("Credential update verification failed and rollback was incomplete; account recovery requires attention.".into());
+                }
+                return Err(
+                    "Credential update verification failed; the previous login was restored."
+                        .into(),
+                );
+            }
+        }
+        if let Some(profile) = self
             .state
             .profiles
             .iter_mut()
             .find(|profile| profile.id == profile_id)
-            .ok_or_else(|| "Saved account was not found.".to_string())?;
-        self.secrets
-            .set(profile_id, raw)
-            .map_err(|_| "macOS Keychain could not update this account.".to_string())?;
-        profile.masked_email = identity.email.as_deref().map(mask_email);
-        profile.fingerprint = identity_fingerprint;
+        {
+            profile.masked_email = identity.email.as_deref().map(mask_email);
+            profile.fingerprint = identity_fingerprint;
+        }
         if let Err(error) = self.persist_state() {
             self.state = previous_state;
-            let restored = if let Some(secret) = previous_secret {
-                self.secrets.set(profile_id, &secret).is_ok()
-            } else {
-                self.secrets.delete(profile_id).is_ok()
-            };
-            if !restored {
+            let keychain_restored = restore_secret(
+                self.secrets.as_ref(),
+                profile_id,
+                previous_secret.as_deref(),
+            );
+            let auth_restored =
+                !current_login_replaced || restore_login(&self.auth_path, previous_auth.as_deref());
+            if !keychain_restored || !auth_restored {
                 return Err(format!(
-                    "{error} Keychain rollback also failed; account recovery requires attention."
+                    "{error} Credential rollback also failed; account recovery requires attention."
                 ));
             }
             return Err(error);
         }
-        self.view()
+        Ok(ReplaceCredentialsOutcome {
+            view: self.view()?,
+            current_login_replaced,
+        })
     }
 
     pub fn rename(&mut self, profile_id: &str, alias: &str) -> Result<AccountVaultView, String> {
@@ -335,6 +470,7 @@ impl AccountVault {
 
     pub fn delete(&mut self, profile_id: &str) -> Result<AccountVaultView, String> {
         self.ensure_state_ready()?;
+        self.reconcile_view()?;
         if self.state.active_profile_id.as_deref() == Some(profile_id) {
             return Err(
                 "Switch to another saved account before deleting the active account.".into(),
@@ -346,17 +482,22 @@ impl AccountVault {
             .iter()
             .position(|profile| profile.id == profile_id)
             .ok_or_else(|| "Saved account was not found.".to_string())?;
-        let old_secret = self
-            .secrets
-            .get(profile_id)
-            .map_err(|_| "macOS Keychain could not open this account.".to_string())?;
-        self.secrets
-            .delete(profile_id)
-            .map_err(|_| "macOS Keychain could not delete this account.".to_string())?;
+        let old_secret = match self.secrets.get(profile_id) {
+            Ok(secret) => Some(secret),
+            Err(SecretError::Missing) => None,
+            Err(error) => return Err(error.read_message().into()),
+        };
+        match self.secrets.delete(profile_id) {
+            Ok(()) | Err(SecretError::Missing) => {}
+            Err(error) => return Err(error.write_message().into()),
+        }
         let profile = self.state.profiles.remove(index);
         if let Err(error) = self.persist_state() {
             self.state.profiles.insert(index, profile);
-            if self.secrets.set(profile_id, &old_secret).is_err() {
+            if old_secret
+                .as_deref()
+                .is_some_and(|secret| self.secrets.set(profile_id, secret).is_err())
+            {
                 return Err(format!(
                     "{error} Keychain rollback also failed; account recovery requires attention."
                 ));
@@ -379,7 +520,7 @@ impl AccountVault {
         let raw = self
             .secrets
             .get(profile_id)
-            .map_err(|_| "Saved credentials are unavailable. Sign in again.".to_string())?;
+            .map_err(|error| error.read_message().to_string())?;
         let identity = codex::credential_identity(&raw).map_err(|_| {
             "Saved credentials are invalid. Sign in again before switching.".to_string()
         })?;
@@ -429,7 +570,7 @@ impl AccountVault {
         let raw = self
             .secrets
             .get(profile_id)
-            .map_err(|_| "Saved credentials are unavailable. Sign in again.".to_string())?;
+            .map_err(|error| error.read_message().to_string())?;
         if raw.len() as u64 > codex::MAX_AUTH_BYTES {
             return Err("Saved credentials are too large. Sign in again.".into());
         }
@@ -449,7 +590,8 @@ impl AccountVault {
             {
                 "ready"
             }
-            _ => "invalid",
+            Ok(_) => "invalid",
+            Err(error) => error.credential_status(),
         };
         AccountProfileView {
             id: profile.id.clone(),
@@ -467,6 +609,7 @@ impl AccountVault {
     }
 
     fn sync_current_credentials(&mut self) -> Result<(), String> {
+        self.reconcile_view()?;
         let raw = match read_regular_file(&self.auth_path, codex::MAX_AUTH_BYTES) {
             Ok(value) => value,
             Err(_) => return Ok(()),
@@ -482,10 +625,9 @@ impl AccountVault {
             .iter()
             .find(|profile| profile.fingerprint == identity_fingerprint)
         {
-            self.secrets.set(&profile.id, &raw).map_err(|_| {
-                "macOS Keychain could not synchronize the active account.".to_string()
-            })?;
-            self.state.active_profile_id = Some(profile.id.clone());
+            self.secrets
+                .set(&profile.id, &raw)
+                .map_err(|error| error.write_message().to_string())?;
         }
         Ok(())
     }
@@ -733,6 +875,13 @@ fn restore_login(path: &Path, previous: Option<&[u8]>) -> bool {
     }
 }
 
+fn restore_secret(store: &dyn SecretStore, account: &str, previous: Option<&[u8]>) -> bool {
+    match previous {
+        Some(secret) => store.set(account, secret).is_ok(),
+        None => matches!(store.delete(account), Ok(()) | Err(SecretError::Missing)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -752,7 +901,7 @@ mod tests {
                 .unwrap()
                 .get(account)
                 .cloned()
-                .ok_or(SecretError::Unavailable)
+                .ok_or(SecretError::Missing)
         }
         fn delete(&self, account: &str) -> Result<(), SecretError> {
             self.0
@@ -760,7 +909,7 @@ mod tests {
                 .unwrap()
                 .remove(account)
                 .map(|_| ())
-                .ok_or(SecretError::Unavailable)
+                .ok_or(SecretError::Missing)
         }
     }
 
@@ -918,6 +1067,209 @@ mod tests {
             fs::metadata(&auth).unwrap().permissions().mode() & 0o777,
             0o600
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reconciles_the_active_profile_from_the_real_auth_file() {
+        let (root, auth, _, mut vault) = test_vault();
+        let first = fixture("acct-a", "a@example.com", "token-a");
+        let second = fixture("acct-b", "b@example.com", "token-b");
+        fs::write(&auth, &first).unwrap();
+        vault.save_current("A").unwrap();
+        let second_view = vault.import_credentials("B", &second).unwrap();
+        let second_id = second_view
+            .profiles
+            .iter()
+            .find(|profile| profile.alias == "B")
+            .unwrap()
+            .id
+            .clone();
+
+        fs::write(&auth, &second).unwrap();
+        let (view, changed) = vault.reconcile_view().unwrap();
+
+        assert!(changed);
+        assert_eq!(view.active_profile_id.as_deref(), Some(second_id.as_str()));
+        assert!(
+            view.profiles
+                .iter()
+                .find(|profile| profile.id == second_id)
+                .unwrap()
+                .is_active
+        );
+        let stored = decode_state(&fs::read(root.join(STATE_FILE)).unwrap()).unwrap();
+        assert_eq!(stored.active_profile_id, view.active_profile_id);
+        let (_, changed_again) = vault.reconcile_view().unwrap();
+        assert!(!changed_again);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unsaved_missing_or_invalid_auth_clears_the_active_profile() {
+        let (root, auth, _, mut vault) = test_vault();
+        let first = fixture("acct-a", "a@example.com", "token-a");
+        fs::write(&auth, &first).unwrap();
+        vault.save_current("A").unwrap();
+
+        fs::write(
+            &auth,
+            fixture("acct-unsaved", "new@example.com", "token-new"),
+        )
+        .unwrap();
+        let (unsaved, changed) = vault.reconcile_view().unwrap();
+        assert!(changed);
+        assert_eq!(unsaved.active_profile_id, None);
+        assert!(unsaved.has_current_login);
+        assert!(!unsaved.current_login_saved);
+
+        fs::write(&auth, b"invalid auth").unwrap();
+        let invalid = vault.view().unwrap();
+        assert_eq!(invalid.active_profile_id, None);
+        assert!(!invalid.has_current_login);
+
+        fs::remove_file(&auth).unwrap();
+        let missing = vault.view().unwrap();
+        assert_eq!(missing.active_profile_id, None);
+        assert!(!missing.has_current_login);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn relogging_the_current_profile_updates_keychain_auth_and_metadata() {
+        let (root, auth, secrets, mut vault) = test_vault();
+        let original = fixture("acct-a", "a@example.com", "token-a");
+        let replacement = fixture("acct-a-new", "new@example.com", "token-new");
+        fs::write(&auth, &original).unwrap();
+        let view = vault.save_current("A").unwrap();
+        let profile_id = view.active_profile_id.unwrap();
+
+        let outcome = vault
+            .replace_credentials(&profile_id, &replacement)
+            .unwrap();
+
+        assert!(outcome.current_login_replaced);
+        assert_eq!(fs::read(&auth).unwrap(), replacement);
+        assert_eq!(secrets.get(&profile_id).unwrap(), replacement);
+        assert_eq!(
+            outcome.view.active_profile_id.as_deref(),
+            Some(profile_id.as_str())
+        );
+        assert_eq!(
+            outcome.view.profiles[0].masked_email.as_deref(),
+            Some("n***@example.com")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn relogging_an_inactive_profile_does_not_change_current_auth() {
+        let (root, auth, secrets, mut vault) = test_vault();
+        let current = fixture("acct-a", "a@example.com", "token-a");
+        let inactive = fixture("acct-b", "b@example.com", "token-b");
+        let replacement = fixture("acct-c", "c@example.com", "token-c");
+        fs::write(&auth, &current).unwrap();
+        vault.save_current("A").unwrap();
+        let view = vault.import_credentials("B", &inactive).unwrap();
+        let inactive_id = view
+            .profiles
+            .iter()
+            .find(|profile| profile.alias == "B")
+            .unwrap()
+            .id
+            .clone();
+
+        let outcome = vault
+            .replace_credentials(&inactive_id, &replacement)
+            .unwrap();
+
+        assert!(!outcome.current_login_replaced);
+        assert_eq!(fs::read(&auth).unwrap(), current);
+        assert_eq!(secrets.get(&inactive_id).unwrap(), replacement);
+        assert!(vault.replace_credentials(&inactive_id, &current).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn current_relogin_rolls_back_all_state_when_metadata_commit_fails() {
+        let (root, auth, secrets, mut vault) = test_vault();
+        let original = fixture("acct-a", "a@example.com", "token-a");
+        let replacement = fixture("acct-b", "b@example.com", "token-b");
+        fs::write(&auth, &original).unwrap();
+        let view = vault.save_current("A").unwrap();
+        let profile_id = view.active_profile_id.unwrap();
+        let previous_state = vault.state.clone();
+        let blocked_root = root.join("blocked-root");
+        fs::write(&blocked_root, b"not a directory").unwrap();
+        vault.root = blocked_root;
+
+        assert!(vault
+            .replace_credentials(&profile_id, &replacement)
+            .is_err());
+        assert_eq!(fs::read(&auth).unwrap(), original);
+        assert_eq!(secrets.get(&profile_id).unwrap(), original);
+        assert_eq!(
+            vault.state.profiles[0].fingerprint,
+            previous_state.profiles[0].fingerprint
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_non_current_profile_with_missing_keychain_data_can_be_deleted() {
+        let (root, auth, secrets, mut vault) = test_vault();
+        let current = fixture("acct-a", "a@example.com", "token-a");
+        let inactive = fixture("acct-b", "b@example.com", "token-b");
+        fs::write(&auth, &current).unwrap();
+        vault.save_current("A").unwrap();
+        let view = vault.import_credentials("B", &inactive).unwrap();
+        let inactive_id = view
+            .profiles
+            .iter()
+            .find(|profile| profile.alias == "B")
+            .unwrap()
+            .id
+            .clone();
+        secrets.delete(&inactive_id).unwrap();
+
+        let deleted = vault.delete(&inactive_id).unwrap();
+
+        assert!(deleted
+            .profiles
+            .iter()
+            .all(|profile| profile.id != inactive_id));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    struct DeniedSecrets;
+
+    impl SecretStore for DeniedSecrets {
+        fn set(&self, _: &str, _: &[u8]) -> Result<(), SecretError> {
+            Err(SecretError::PermissionDenied)
+        }
+
+        fn get(&self, _: &str) -> Result<Vec<u8>, SecretError> {
+            Err(SecretError::PermissionDenied)
+        }
+
+        fn delete(&self, _: &str) -> Result<(), SecretError> {
+            Err(SecretError::PermissionDenied)
+        }
+    }
+
+    #[test]
+    fn keychain_permission_denial_is_not_reported_as_expired_credentials() {
+        let (root, auth, _, _) = test_vault();
+        let state_path = root.join(STATE_FILE);
+        write_state(&state_path, &state_fixture(None));
+        let mut vault = AccountVault::load_with_store(root.clone(), auth, Arc::new(DeniedSecrets));
+
+        let view = vault.view().unwrap();
+
+        assert_eq!(view.profiles[0].credential_status, "denied");
+        let error = vault.delete("profile-a").unwrap_err();
+        assert!(error.contains("denied access"));
+        assert!(!error.contains("Sign in again"));
         let _ = fs::remove_dir_all(root);
     }
 

@@ -156,17 +156,25 @@ export function AccountSwitcher() {
       <section className="account-list" aria-live="polite">
         {vault?.profiles.map((profile) => {
           const quota = weeklyQuotas.get(profile.id);
-          const needsLogin = profile.credentialStatus === "invalid" || quota?.status === "signed_out";
+          const needsLogin = profile.credentialStatus === "invalid" || profile.credentialStatus === "missing" || (profile.credentialStatus === "ready" && quota?.status === "signed_out");
+          const credentialBlocked = profile.credentialStatus !== "ready" || quota?.status === "signed_out";
+          const credentialMessage = profile.credentialStatus === "locked"
+            ? t.locked
+            : profile.credentialStatus === "denied"
+              ? t.denied
+              : profile.credentialStatus === "unavailable"
+                ? t.unavailable
+                : t.invalid;
           return (
           <article className={`account-row${profile.isActive ? " account-row--active" : ""}`} key={profile.id}>
             <span className="account-row__state" aria-hidden="true">{profile.isActive ? <CheckCircle weight="fill" /> : <SignIn />}</span>
             <div className="account-row__identity">
               <strong>{profile.alias}</strong>
-              <small>{profile.maskedEmail ?? (profile.credentialStatus === "invalid" ? t.invalid : "Codex")}</small>
-              <span className="account-row__quota" title={quota?.message ?? undefined}>{needsLogin ? t.invalid : quota?.remainingPercent != null ? `${t.weekly} ${Math.round(quota.remainingPercent)}%` : t.quotaUnavailable}</span>
+              <small>{profile.maskedEmail ?? (profile.credentialStatus === "ready" ? "Codex" : credentialMessage)}</small>
+              <span className="account-row__quota" title={quota?.message ?? undefined}>{credentialBlocked ? credentialMessage : quota?.remainingPercent != null ? `${t.weekly} ${Math.round(quota.remainingPercent)}%` : t.quotaUnavailable}</span>
             </div>
             {profile.isActive ? <span className="account-row__current">{t.current}</span> : (
-              <button type="button" className="account-row__switch" disabled={busy !== null || needsLogin} onClick={() => void run(profile.id, async () => { await switchAccount(profile.id); return getAccountVault(); })}>{t.switch}</button>
+              <button type="button" className="account-row__switch" disabled={busy !== null || credentialBlocked} onClick={() => void run(profile.id, async () => { await switchAccount(profile.id); return getAccountVault(); })}>{t.switch}</button>
             )}
             {needsLogin ? <button type="button" className="account-icon-button" onClick={() => void beginLogin(profile.id)} aria-label={t.invalid}><SignIn /></button> : null}
             <button type="button" className="account-icon-button" onClick={() => {

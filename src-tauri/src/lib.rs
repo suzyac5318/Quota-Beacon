@@ -442,14 +442,32 @@ fn publish_account_vault(
     app: &AppHandle,
     state: &AppState,
 ) -> Result<account_vault::AccountVaultView, String> {
-    let view = state
-        .account_vault
-        .lock()
-        .map_err(|_| "Account storage is busy.".to_string())?
-        .view()?;
+    let view = reconciled_account_vault(state)?;
     let _ = app.emit_to("widget", "account-vault-changed", view.clone());
     let _ = app.emit_to("account-switcher", "account-vault-changed", view.clone());
     let _ = refresh_tray_menu(app);
+    Ok(view)
+}
+
+fn invalidate_reconciled_account(state: &AppState) {
+    state.account_generation.fetch_add(1, Ordering::SeqCst);
+    if let Ok(mut cache) = state.snapshot_cache.lock() {
+        *cache = None;
+    }
+    if let Ok(mut cache) = state.account_quota_cache.lock() {
+        cache.clear();
+    }
+}
+
+fn reconciled_account_vault(state: &AppState) -> Result<account_vault::AccountVaultView, String> {
+    let (view, changed) = state
+        .account_vault
+        .lock()
+        .map_err(|_| "Account storage is busy.".to_string())?
+        .reconcile_view()?;
+    if changed {
+        invalidate_reconciled_account(state);
+    }
     Ok(view)
 }
 
@@ -457,11 +475,7 @@ fn publish_account_vault(
 fn get_account_vault(
     state: State<'_, AppState>,
 ) -> Result<account_vault::AccountVaultView, String> {
-    state
-        .account_vault
-        .lock()
-        .map_err(|_| "Account storage is busy.".to_string())?
-        .view()
+    reconciled_account_vault(state.inner())
 }
 
 fn weekly_quota_from_snapshot(
@@ -494,11 +508,7 @@ fn weekly_quota_from_snapshot(
 async fn get_account_weekly_quotas(
     state: State<'_, AppState>,
 ) -> Result<Vec<AccountWeeklyQuota>, String> {
-    let vault_view = state
-        .account_vault
-        .lock()
-        .map_err(|_| "Account storage is busy.".to_string())?
-        .view()?;
+    let vault_view = reconciled_account_vault(state.inner())?;
     let profile_ids = vault_view
         .profiles
         .iter()
@@ -541,11 +551,14 @@ async fn get_account_weekly_quotas(
             continue;
         }
 
-        let credentials = state
-            .account_vault
-            .lock()
-            .map_err(|_| "Account storage is busy.".to_string())?
-            .read_profile_credentials(&profile_id);
+        let (credential_generation, credentials) = {
+            let vault = state
+                .account_vault
+                .lock()
+                .map_err(|_| "Account storage is busy.".to_string())?;
+            let credentials = vault.read_profile_credentials(&profile_id);
+            (state.account_generation.load(Ordering::SeqCst), credentials)
+        };
         let quota = match credentials {
             Ok(raw) => weekly_quota_from_snapshot(
                 profile_id.clone(),
@@ -558,10 +571,19 @@ async fn get_account_weekly_quotas(
                 message: Some(message),
             },
         };
-        if let Ok(mut cache) = state.account_quota_cache.lock() {
-            cache.insert(profile_id, (Instant::now(), quota.clone()));
+        if account_response_is_current(credential_generation, &state.account_generation) {
+            if let Ok(mut cache) = state.account_quota_cache.lock() {
+                cache.insert(profile_id, (Instant::now(), quota.clone()));
+            }
+            quotas.push(quota);
+        } else {
+            quotas.push(AccountWeeklyQuota {
+                profile_id,
+                remaining_percent: None,
+                status: "loading".into(),
+                message: None,
+            });
         }
-        quotas.push(quota);
     }
     Ok(quotas)
 }
@@ -582,6 +604,7 @@ fn save_current_account(
             cache.remove(profile_id);
         }
     }
+    state.account_generation.fetch_add(1, Ordering::SeqCst);
     let _ = app.emit_to("widget", "account-vault-changed", view.clone());
     let _ = app.emit_to("account-switcher", "account-vault-changed", view.clone());
     let _ = refresh_tray_menu(&app);
@@ -620,6 +643,7 @@ fn delete_account(
     if let Ok(mut cache) = state.account_quota_cache.lock() {
         cache.remove(&profile_id);
     }
+    state.account_generation.fetch_add(1, Ordering::SeqCst);
     let _ = app.emit_to("widget", "account-vault-changed", view.clone());
     let _ = app.emit_to("account-switcher", "account-vault-changed", view.clone());
     let _ = refresh_tray_menu(&app);
@@ -715,6 +739,42 @@ fn cleanup_stale_login_tasks(root: &Path) {
     }
 }
 
+#[cfg(unix)]
+fn secure_login_directory(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_| "Isolated Codex login directory is unavailable.".to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("Isolated Codex login directory is not safe.".into());
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .map_err(|_| "Isolated Codex login directory permissions could not be secured.".to_string())
+}
+
+#[cfg(not(unix))]
+fn secure_login_directory(_: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn secure_login_auth_file(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_| "Isolated Codex login data is unavailable.".to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("Isolated Codex login data is not safe.".into());
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|_| "Isolated Codex login data permissions could not be secured.".to_string())
+}
+
+#[cfg(not(unix))]
+fn secure_login_auth_file(_: &Path) -> Result<(), String> {
+    Ok(())
+}
+
 #[tauri::command]
 fn begin_account_login(
     alias: String,
@@ -744,6 +804,10 @@ fn begin_account_login(
     let codex_home = task_root.join("codex-home");
     fs::create_dir_all(&codex_home)
         .map_err(|_| "Isolated Codex login directory could not be created.".to_string())?;
+    if let Err(message) = secure_login_directory(&codex_home) {
+        cleanup_login_task(&state.account_login_root, &task_root);
+        return Err(message);
+    }
     let child = match Command::new(locate_codex_cli())
         .arg("login")
         .env("CODEX_HOME", &codex_home)
@@ -821,6 +885,14 @@ fn poll_account_login(
         });
     }
     let auth_path = task.task_root.join("codex-home/auth.json");
+    if let Err(message) = secure_login_auth_file(&auth_path) {
+        cleanup_login_task(&state.account_login_root, &task.task_root);
+        return Ok(AccountLoginStatus {
+            task_id,
+            status: "failed",
+            message: Some(message),
+        });
+    }
     let raw = match codex::read_auth_bytes(&auth_path) {
         Ok(value) => value,
         Err(message) => {
@@ -838,16 +910,27 @@ fn poll_account_login(
             .lock()
             .map_err(|_| "Account storage is busy.".to_string())?;
         match task.replace_profile_id.as_deref() {
-            Some(profile_id) => vault.replace_credentials(profile_id, &raw),
-            None => vault.import_credentials(&task.alias, &raw),
+            Some(profile_id) => vault
+                .replace_credentials(profile_id, &raw)
+                .map(|outcome| (outcome.view, outcome.current_login_replaced)),
+            None => vault
+                .import_credentials(&task.alias, &raw)
+                .map(|view| (view, false)),
         }
     };
     cleanup_login_task(&state.account_login_root, &task.task_root);
     match result {
-        Ok(view) => {
+        Ok((view, current_login_replaced)) => {
             if let Some(profile_id) = task.replace_profile_id.as_deref() {
                 if let Ok(mut cache) = state.account_quota_cache.lock() {
                     cache.remove(profile_id);
+                }
+                state.account_generation.fetch_add(1, Ordering::SeqCst);
+                if current_login_replaced {
+                    if let Ok(mut cache) = state.snapshot_cache.lock() {
+                        *cache = None;
+                    }
+                    let _ = app.emit_to("widget", "refresh-requested", ());
                 }
             }
             let _ = app.emit_to("widget", "account-vault-changed", view.clone());
@@ -1067,23 +1150,21 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     )?;
     let accounts = Submenu::new(app, text("Codex 账号", "Codex Accounts"), true)?;
     if let Some(state) = app.try_state::<AppState>() {
-        if let Ok(vault) = state.account_vault.lock() {
-            if let Ok(view) = vault.view() {
-                for profile in view.profiles {
-                    let label = if profile.is_active {
-                        format!("✓ {}", profile.alias)
-                    } else {
-                        profile.alias
-                    };
-                    let item = MenuItem::with_id(
-                        app,
-                        format!("account-switch:{}", profile.id),
-                        label,
-                        !profile.is_active && profile.credential_status == "ready",
-                        None::<&str>,
-                    )?;
-                    accounts.append(&item)?;
-                }
+        if let Ok(view) = reconciled_account_vault(state.inner()) {
+            for profile in view.profiles {
+                let label = if profile.is_active {
+                    format!("✓ {}", profile.alias)
+                } else {
+                    profile.alias
+                };
+                let item = MenuItem::with_id(
+                    app,
+                    format!("account-switch:{}", profile.id),
+                    label,
+                    !profile.is_active && profile.credential_status == "ready",
+                    None::<&str>,
+                )?;
+                accounts.append(&item)?;
             }
         }
     }
