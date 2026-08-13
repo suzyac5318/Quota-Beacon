@@ -1,11 +1,13 @@
-# Quota Beacon macOS 1.8.0
+# Quota Beacon macOS X.Y.Z
 
 Quota Beacon is a local-first floating desktop widget for checking Codex usage limits from the local Codex Desktop login state.
 
 ## Downloads
 
-- macOS Universal ad-hoc: `.dmg` or `quota-beacon-macos-universal-ad-hoc.zip`
-- macOS SHA-256: `quota-beacon-macos-universal-ad-hoc.sha256`
+- macOS Universal ad-hoc DMG: `quota-beacon-macos-universal-ad-hoc.dmg`
+- macOS Universal ad-hoc ZIP: `quota-beacon-macos-universal-ad-hoc.zip`
+- DMG SHA-256: `quota-beacon-macos-universal-ad-hoc.dmg.sha256`
+- ZIP SHA-256: `quota-beacon-macos-universal-ad-hoc.zip.sha256`
 
 ## Install
 
@@ -39,5 +41,7 @@ Quota Beacon stores explicitly saved Mac account credentials only in the local m
 - Frontend tests passed.
 - Rust tests passed.
 - Web build passed.
-- macOS Universal ad-hoc bundle, DMG, and SHA-256 generated and verified by CI.
+- Release tag, source versions, app bundle versions, and Mac product-line history verified by CI.
+- Final DMG and ZIP contents, signatures, Universal architectures, executable permission, and separate SHA-256 files verified by CI.
+- Release asset allowlist contains exactly the two packages and their two matching checksum files.
 - Sensitive-content scan passed for source package.
