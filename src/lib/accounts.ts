@@ -21,8 +21,6 @@ export interface AccountVault {
 
 export interface AccountSwitchOutcome {
   profile: AccountProfile;
-  credentialsSwitched: boolean;
-  restartRecommended: boolean;
 }
 
 export interface AccountLoginStatus {
@@ -34,7 +32,7 @@ export interface AccountLoginStatus {
 export interface AccountWeeklyQuota {
   profileId: string;
   remainingPercent: number | null;
-  status: "ok" | "loading" | "stale" | "unavailable" | "signed_out";
+  status: "ok" | "loading" | "unavailable" | "signed_out";
   message: string | null;
 }
 
@@ -89,7 +87,7 @@ export async function deleteAccount(profileId: string): Promise<AccountVault> {
 export async function switchAccount(profileId: string): Promise<AccountSwitchOutcome> {
   if (!isTauri()) {
     const profile = mockVault.profiles.find((item) => item.id === profileId) ?? mockVault.profiles[0];
-    return { profile, credentialsSwitched: true, restartRecommended: false };
+    return { profile };
   }
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<AccountSwitchOutcome>("switch_account", { profileId });

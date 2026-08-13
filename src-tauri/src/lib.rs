@@ -28,6 +28,8 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_window_state::Builder as WindowStateBuilder;
 
+const HTTP_USER_AGENT: &str = concat!("Quota-Beacon/", env!("CARGO_PKG_VERSION"));
+
 struct AppState {
     client: reqwest::Client,
     preferences: Mutex<WidgetPreferences>,
@@ -447,10 +449,7 @@ fn publish_account_vault(
     Ok(view)
 }
 
-fn invalidate_reconciled_account(
-    state: &AppState,
-    view: &account_vault::AccountVaultView,
-) {
+fn invalidate_reconciled_account(state: &AppState, view: &account_vault::AccountVaultView) {
     state.account_generation.fetch_add(1, Ordering::SeqCst);
     if let Ok(mut cache) = state.snapshot_cache.lock() {
         *cache = None;
@@ -1497,7 +1496,7 @@ pub fn run() {
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(12))
                 .redirect(reqwest::redirect::Policy::none())
-                .user_agent("QuotaFloat/0.1")
+                .user_agent(HTTP_USER_AGENT)
                 .build()
                 .expect("static HTTP client configuration must be valid");
             let token_usage_cache = Arc::new(Mutex::new(token_usage::TokenUsageCache::default()));

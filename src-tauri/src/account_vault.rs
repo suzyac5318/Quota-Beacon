@@ -150,8 +150,6 @@ pub struct AccountVaultView {
 #[serde(rename_all = "camelCase")]
 pub struct SwitchOutcome {
     pub profile: AccountProfileView,
-    pub credentials_switched: bool,
-    pub restart_recommended: bool,
 }
 
 pub struct AccountVault {
@@ -554,8 +552,6 @@ impl AccountVault {
         }
         Ok(SwitchOutcome {
             profile: self.profile_view(&target),
-            credentials_switched: true,
-            restart_recommended: false,
         })
     }
 

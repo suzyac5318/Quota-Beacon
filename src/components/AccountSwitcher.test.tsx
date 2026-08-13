@@ -49,7 +49,7 @@ vi.mock("../lib/accounts", async (importOriginal) => {
     }) => { mocks.accountHandlers = handlers; return () => {}; }),
     setAccountSwitcherExpanded: vi.fn(async () => {}),
     closeAccountSwitcher: vi.fn(async () => {}),
-    switchAccount: vi.fn(async () => ({ profile: vault.profiles[1], credentialsSwitched: true, restartRecommended: false })),
+    switchAccount: vi.fn(async () => ({ profile: vault.profiles[1] })),
   };
 });
 

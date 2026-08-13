@@ -2,6 +2,21 @@
 
 本文件记录本仓库可核实的版本与开发里程碑。未创建 Git 提交或标签的工作统一标记为“未发布”，不追溯虚构版本号。
 
+## macOS 1.9.6 — 2026-08-13
+
+### R1 已证实冗余收敛
+
+- 删除账号切换结果中始终固定且前端从未消费的 `credentialsSwitched` 与 `restartRecommended`；切换结果只保留实际使用的账号资料。
+- 收窄账号周额度状态类型，移除 Rust 后端从不产生的 `stale`；主卡快照的 stale 恢复语义保持不变。
+- 非当前账号周额度改为真正的 usage/weekly-only 路径，不请求 reset-credits，也不解析或返回 5 小时额度、plan、reset credits 数据。
+- HTTP User-Agent 集中为 `Quota-Beacon/<构建版本>`，随 Cargo 版本自动同步；移除旧的固定 `QuotaFloat/0.1`。
+- 保留 `AccountVault::view() -> Result`：C1/C2 已引入真实损坏状态错误路径，该项不再是冗余候选。
+
+### 范围边界
+
+- 未处理需用户确认的 `?designer`/假数据、Windows 同源码构建代码与依赖、移动端图标或其他生成资产。
+- 本版本未推送、未发布；真实 Mac 额度请求、Keychain 与最终 Universal 工件仍需 macOS CI 和真机验收。
+
 ## macOS 1.9.5 — 2026-08-13
 
 ### Mac 发布链加固

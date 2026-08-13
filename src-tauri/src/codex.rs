@@ -365,37 +365,19 @@ async fn limited_json(mut response: reqwest::Response) -> Result<Value, ()> {
     serde_json::from_slice(&bytes).map_err(|_| ())
 }
 
-fn quota_endpoints(include_reset_credits: bool) -> (&'static str, Option<&'static str>) {
-    (USAGE_URL, include_reset_credits.then_some(CREDITS_URL))
-}
-
-async fn fetch_snapshot_with_auth(
-    client: &reqwest::Client,
-    auth: Auth,
-    include_reset_credits: bool,
-) -> ProviderSnapshot {
+async fn fetch_snapshot_with_auth(client: &reqwest::Client, auth: Auth) -> ProviderSnapshot {
     let request_headers = match headers(&auth) {
         Ok(value) => value,
         Err(message) => return ProviderSnapshot::failure("signed_out", message),
     };
 
-    let (usage_url, credits_url) = quota_endpoints(include_reset_credits);
-    let (usage_result, credits_result) = match credits_url {
-        Some(credits_url) => {
-            let (usage_result, credits_result) = tokio::join!(
-                client
-                    .get(usage_url)
-                    .headers(request_headers.clone())
-                    .send(),
-                client.get(credits_url).headers(request_headers).send(),
-            );
-            (usage_result, Some(credits_result))
-        }
-        None => (
-            client.get(usage_url).headers(request_headers).send().await,
-            None,
-        ),
-    };
+    let (usage_result, credits_result) = tokio::join!(
+        client
+            .get(USAGE_URL)
+            .headers(request_headers.clone())
+            .send(),
+        client.get(CREDITS_URL).headers(request_headers).send(),
+    );
 
     let usage_response = match usage_result {
         Ok(response) if response.status().is_success() => response,
@@ -475,32 +457,30 @@ async fn fetch_snapshot_with_auth(
         .unwrap_or_default();
 
     let (reset_credits, reset_credit_expires_at) = match credits_result {
-        Some(Ok(response)) if response.status().is_success() => {
-            match limited_json(response).await.ok() {
-                Some(value) => (
-                    integer(
-                        &value,
-                        &[
-                            "available_count",
-                            "availableCount",
-                            "remaining",
-                            "count",
-                            "quantity",
-                        ],
-                    )
-                    .or(usage_reset_credits),
-                    {
-                        let expirations = collect_reset_credit_expirations(&value);
-                        if expirations.is_empty() {
-                            usage_reset_credit_expires_at
-                        } else {
-                            expirations
-                        }
-                    },
-                ),
-                None => (usage_reset_credits, usage_reset_credit_expires_at),
-            }
-        }
+        Ok(response) if response.status().is_success() => match limited_json(response).await.ok() {
+            Some(value) => (
+                integer(
+                    &value,
+                    &[
+                        "available_count",
+                        "availableCount",
+                        "remaining",
+                        "count",
+                        "quantity",
+                    ],
+                )
+                .or(usage_reset_credits),
+                {
+                    let expirations = collect_reset_credit_expirations(&value);
+                    if expirations.is_empty() {
+                        usage_reset_credit_expires_at
+                    } else {
+                        expirations
+                    }
+                },
+            ),
+            None => (usage_reset_credits, usage_reset_credit_expires_at),
+        },
         _ => (usage_reset_credits, usage_reset_credit_expires_at),
     };
 
@@ -526,7 +506,69 @@ pub(crate) async fn fetch_weekly_snapshot_from_bytes(
         Ok(value) => value,
         Err(message) => return ProviderSnapshot::failure("signed_out", message),
     };
-    fetch_snapshot_with_auth(client, auth, false).await
+    let request_headers = match headers(&auth) {
+        Ok(value) => value,
+        Err(message) => return ProviderSnapshot::failure("signed_out", message),
+    };
+    let response = match client.get(USAGE_URL).headers(request_headers).send().await {
+        Ok(response) if response.status().is_success() => response,
+        Ok(response) => {
+            let (status, message) = safe_http_failure(response.status());
+            return ProviderSnapshot::failure(status, message);
+        }
+        Err(_) => {
+            return ProviderSnapshot::failure(
+                "unavailable",
+                "Network unavailable. It will retry automatically.",
+            )
+        }
+    };
+    let usage = match limited_json(response).await {
+        Ok(value) => value,
+        Err(_) => {
+            return ProviderSnapshot::failure("unavailable", "Quota response format has changed.")
+        }
+    };
+    weekly_snapshot_from_usage(&usage)
+}
+
+fn weekly_snapshot_from_usage(usage: &Value) -> ProviderSnapshot {
+    let rate_limit = usage
+        .get("rate_limit")
+        .or_else(|| usage.get("rateLimit"))
+        .unwrap_or(usage);
+    let weekly_window = parse_window(find_window(
+        rate_limit,
+        &[
+            "secondary_window",
+            "secondaryWindow",
+            "weekly_window",
+            "weeklyWindow",
+            "week_window",
+            "weekWindow",
+            "weekly",
+            "secondary",
+        ],
+        604_800,
+    ));
+    if weekly_window.is_none() {
+        return ProviderSnapshot::failure(
+            "unavailable",
+            "Quota response is missing the weekly usage window.",
+        );
+    }
+    ProviderSnapshot {
+        provider: "codex".into(),
+        display_name: "CODEX".into(),
+        plan: None,
+        short_window: None,
+        weekly_window,
+        reset_credits: None,
+        reset_credit_expires_at: Vec::new(),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        status: "ok".into(),
+        message: None,
+    }
 }
 
 pub async fn fetch_snapshot(client: &reqwest::Client) -> ProviderSnapshot {
@@ -534,7 +576,7 @@ pub async fn fetch_snapshot(client: &reqwest::Client) -> ProviderSnapshot {
         Ok(value) => value,
         Err(message) => return ProviderSnapshot::failure("signed_out", message),
     };
-    fetch_snapshot_with_auth(client, auth, true).await
+    fetch_snapshot_with_auth(client, auth).await
 }
 
 #[cfg(test)]
@@ -542,9 +584,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn weekly_only_queries_skip_the_reset_credits_endpoint() {
-        assert_eq!(quota_endpoints(false), (USAGE_URL, None));
-        assert_eq!(quota_endpoints(true), (USAGE_URL, Some(CREDITS_URL)));
+    fn weekly_only_snapshot_discards_non_weekly_fields() {
+        let usage = serde_json::json!({
+            "plan_type": "pro",
+            "rate_limit_reset_credits": { "available_count": 2 },
+            "rate_limit": {
+                "primary_window": { "remainingPercent": 44, "windowSeconds": 18000 },
+                "secondary_window": { "remainingPercent": 77, "windowSeconds": 604800 }
+            }
+        });
+        let snapshot = weekly_snapshot_from_usage(&usage);
+        assert_eq!(snapshot.status, "ok");
+        assert_eq!(snapshot.weekly_window.unwrap().remaining_percent, 77.0);
+        assert!(snapshot.short_window.is_none());
+        assert!(snapshot.plan.is_none());
+        assert!(snapshot.reset_credits.is_none());
+        assert!(snapshot.reset_credit_expires_at.is_empty());
     }
 
     #[test]
