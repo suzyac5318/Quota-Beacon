@@ -15,11 +15,13 @@ import {
   setAccountSwitcherExpanded,
   switchAccount,
   type AccountLoginStatus,
+  type AccountWindowTheme,
   type AccountWeeklyQuota,
   type AccountVault,
 } from "../lib/accounts";
 import { getPreferences } from "../lib/bridge";
 import { normalizeLanguage } from "../lib/i18n";
+import { quotaThemeStyle } from "../lib/quotaTheme";
 import type { Language } from "../types";
 
 export function AccountSwitcher() {
@@ -31,6 +33,7 @@ export function AccountSwitcher() {
   const [login, setLogin] = useState<AccountLoginStatus | null>(null);
   const [notice, setNotice] = useState<{ id: number; kind: "error" | "info" | "success"; message: string } | null>(null);
   const [weeklyQuotas, setWeeklyQuotas] = useState<Map<string, AccountWeeklyQuota>>(() => new Map());
+  const [windowTheme, setWindowTheme] = useState<AccountWindowTheme | null>(null);
   const noticeSequence = useRef(0);
   const t = useMemo(() => accountCopy(language), [language]);
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -47,6 +50,8 @@ export function AccountSwitcher() {
     void listenAccountEvents({
       onVault: setVault,
       onSwitched: () => showNotice(t.switched, "success"),
+      onOpened: setWindowTheme,
+      onThemeChanged: setWindowTheme,
       onError: (message) => showNotice(message),
     }).then((unlisten) => { if (cancelled) unlisten(); else cleanup = unlisten; });
     return () => { cancelled = true; cleanup(); };
@@ -133,7 +138,11 @@ export function AccountSwitcher() {
   const close = () => void closeAccountSwitcher().catch((error) => showNotice(String(error)));
 
   return (
-    <main className="account-switcher" aria-label={t.title}>
+    <main
+      className={`account-switcher${windowTheme?.percent == null ? " account-switcher--neutral" : ""}`}
+      style={windowTheme?.percent == null ? undefined : quotaThemeStyle(windowTheme.percent, windowTheme.colors)}
+      aria-label={t.title}
+    >
       <header className="account-switcher__header">
         <div><strong>{t.title}</strong><small>macOS Keychain</small></div>
         <div className="account-switcher__header-actions">

@@ -6,6 +6,9 @@
   background: transparent;
   font-synthesis: none;
   --morph-spring: cubic-bezier(.24,.72,.28,1);
+  --glass-control-surface: rgba(255,255,255,.34);
+  --glass-border: rgba(255,255,255,.62);
+  --glass-stroke-width: .5px;
 }
 
 @supports (transition-timing-function: linear(0, 1)) {
@@ -313,7 +316,8 @@ button { font: inherit; }
 .account-chip svg { width: 14px; height: 14px; flex: none; }
 .account-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 700; }
 
-.account-switcher { width: 100%; height: 100%; display: flex; flex-direction: column; gap: 8px; padding: 14px; overflow: hidden; border: 1px solid rgba(255,255,255,.58); border-radius: 24px; color: #17191f; background: rgba(235,240,247,.72); box-shadow: inset 0 1px 0 rgba(255,255,255,.62), 0 18px 44px rgba(34,45,64,.18); backdrop-filter: blur(22px) saturate(1.24); -webkit-backdrop-filter: blur(22px) saturate(1.24); }
+.account-switcher { width: 100%; height: 100%; display: flex; flex-direction: column; gap: 8px; padding: 14px; overflow: hidden; border: 1px solid transparent; border-radius: 24px; color: var(--card-foreground, #17191f); background: linear-gradient(var(--glass-control-tint, rgba(237,243,248,.18)), var(--glass-control-tint, rgba(237,243,248,.18))), var(--glass-control-surface); box-shadow: inset 0 0 0 var(--glass-stroke-width) var(--glass-border), 0 18px 44px rgba(34,45,64,.12); backdrop-filter: blur(13.5px) saturate(1.18); -webkit-backdrop-filter: blur(13.5px) saturate(1.18); transition: background-color 220ms ease; }
+.account-switcher--neutral { --glass-control-tint: rgba(237,243,248,.18); }
 .account-switcher button, .account-switcher input { font: inherit; }
 .account-switcher button { border: 1px solid rgba(52,73,104,.13); color: #293343; background: rgba(255,255,255,.5); cursor: pointer; }
 .account-switcher button:hover:not(:disabled) { background: rgba(255,255,255,.82); }
@@ -331,7 +335,7 @@ button { font: inherit; }
 .account-list::-webkit-scrollbar { display: none; }
 .account-list__empty { margin: auto; max-width: 25ch; color: #677285; text-align: center; font-size: 11px; line-height: 1.45; }
 .account-row { display: grid; grid-template-columns: 22px minmax(0,1fr) auto repeat(3,28px); align-items: center; gap: 4px; min-height: 49px; padding: 5px 6px; border: 1px solid rgba(55,75,104,.09); border-radius: 12px; background: rgba(255,255,255,.34); }
-.account-row--active { background: rgba(214,235,224,.62); }
+.account-row--active { border-color: color-mix(in srgb, var(--card-base, #86b99c) 24%, transparent); background: color-mix(in srgb, var(--card-base, #b9e4c9) 12%, rgba(255,255,255,.5)); }
 .account-row__state { display: grid; place-items: center; color: #527561; }
 .account-row__state svg { width: 16px; height: 16px; }
 .account-row__identity { min-width: 0; display: grid; }
@@ -350,6 +354,10 @@ button { font: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   .account-chip, .account-switcher, .account-row { transition: none; animation: none; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .account-switcher { background: rgba(245,247,250,.94); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
 
 .design-workbench { width: 100vw; min-height: 100vh; display: grid; grid-template-columns: minmax(480px, 1fr) 390px; color: #17191f; background: #f3f4f6; overflow: auto; }

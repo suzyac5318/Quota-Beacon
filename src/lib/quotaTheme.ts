@@ -1,11 +1,14 @@
 import type { CSSProperties } from "react";
 import { clampPercent } from "./format";
 
-export const PALETTE_PERCENTAGES = [0, 25, 50, 75, 100] as const;
+export const PALETTE_PERCENTAGES = [0, 20, 35, 60, 100] as const;
 export const DEFAULT_PALETTE_COLORS = ["#eb5b58", "#f1a06f", "#f5d98f", "#e3f4b8", "#b9e4c9"] as const;
 
 type ThemeVariable =
   | "--card-base"
+  | "--glass-card-tint"
+  | "--glass-orb-tint"
+  | "--glass-control-tint"
   | "--card-foreground"
   | "--card-muted"
   | "--cool"
@@ -79,25 +82,17 @@ export function paletteValidationError(colors: readonly string[]): string | null
   return null;
 }
 
-function relativeLuminance(color: string): number {
-  const channels = colorChannels(color).map((value) => {
-    const normalized = value / 255;
-    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
-  });
-  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
-}
-
 export function quotaThemeStyle(percent: number, colors?: readonly string[] | null): QuotaThemeStyle {
   const value = clampPercent(percent);
   const base = paletteColorAt(value, colors);
-  const useLightForeground = relativeLuminance(base) < 0.18;
-  const foreground = useLightForeground ? "#ffffff" : "#17191f";
-  const muted = useLightForeground ? "rgba(255,255,255,.76)" : "rgba(23,25,31,.62)";
 
   return {
     "--card-base": base,
-    "--card-foreground": foreground,
-    "--card-muted": muted,
+    "--glass-card-tint": `color-mix(in srgb, ${base} 16%, transparent)`,
+    "--glass-orb-tint": `color-mix(in srgb, ${base} 13%, transparent)`,
+    "--glass-control-tint": `color-mix(in srgb, ${base} 16%, transparent)`,
+    "--card-foreground": "#17191f",
+    "--card-muted": "rgba(23,25,31,.66)",
     "--cool": mixHex(base, "#7497c8", 0.18),
     "--glow": mixHex(base, "#ffffff", 0.42),
     "--warm": mixHex(base, "#ff754f", 0.16),
@@ -106,7 +101,7 @@ export function quotaThemeStyle(percent: number, colors?: readonly string[] | nu
     "--linear-end": mixHex(base, "#ffffff", 0.45),
     "--progress-start": mixHex(base, "#121821", 0.38),
     "--progress-end": mixHex(base, "#ffffff", 0.16),
-    "--aurora-opacity": (0.88 - value * 0.0038).toFixed(3),
+    "--aurora-opacity": (0.28 - value * 0.0012).toFixed(3),
     "--palette-track": paletteGradient(colors),
   };
 }

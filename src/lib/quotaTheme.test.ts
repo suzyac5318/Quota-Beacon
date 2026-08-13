@@ -24,17 +24,24 @@ describe("quotaThemeStyle", () => {
     PALETTE_PERCENTAGES.forEach((percent, index) => {
       expect(quotaThemeStyle(percent, custom)["--card-base"]).toBe(custom[index]);
     });
-    expect(paletteGradient(custom)).toContain("#76c893 75%");
+    expect(paletteGradient(custom)).toContain("#76c893 60%");
   });
 
   it("rejects palettes whose interpolation produces duplicate states", () => {
     expect(paletteValidationError(["#000000", "#000001", "#000002", "#000003", "#000004"])).not.toBeNull();
   });
 
-  it("selects a readable foreground for light and dark custom colors", () => {
+  it("keeps foreground legible independently of the quota tint", () => {
     const dark = ["#101820", "#182330", "#203050", "#293f66", "#36557d"];
-    expect(quotaThemeStyle(50, dark)["--card-foreground"]).toBe("#ffffff");
+    expect(quotaThemeStyle(50, dark)["--card-foreground"]).toBe("#17191f");
     expect(quotaThemeStyle(50)["--card-foreground"]).toBe("#17191f");
+  });
+
+  it("separates glass tint weights from the opaque quota color", () => {
+    const style = quotaThemeStyle(60);
+    expect(style["--glass-card-tint"]).toBe(`color-mix(in srgb, ${style["--card-base"]} 16%, transparent)`);
+    expect(style["--glass-orb-tint"]).toBe(`color-mix(in srgb, ${style["--card-base"]} 13%, transparent)`);
+    expect(style["--glass-control-tint"]).toBe(`color-mix(in srgb, ${style["--card-base"]} 16%, transparent)`);
   });
 
   it("clamps out-of-range values", () => {

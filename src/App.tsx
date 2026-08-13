@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { QuotaCard } from "./components/QuotaCard";
-import { closeAccountSwitcher, getAccountVault, listenAccountEvents, openAccountSwitcher, type AccountVault } from "./lib/accounts";
+import { closeAccountSwitcher, getAccountVault, listenAccountEvents, openAccountSwitcher, updateAccountSwitcherTheme, type AccountVault, type AccountWindowTheme } from "./lib/accounts";
 import { closePalettePreview, fetchSnapshots, fetchTokenUsage, getPreferences, listenDesktopEvents, listenPalettePreview, openPalettePreview, setAlwaysOnTop, setWidgetExpanded, startDragging, updatePreferences } from "./lib/bridge";
 import { clampPercent, getPrimaryQuota } from "./lib/format";
 import { copy, nextLanguage, normalizeLanguage } from "./lib/i18n";
@@ -256,6 +256,16 @@ export default function App() {
     return current;
   })();
   const activePaletteColors = paletteDraft ?? preferences.paletteColors;
+  const accountThemePercent = current?.shortWindow ? clampPercent(current.shortWindow.remainingPercent) : null;
+  const accountWindowTheme = useMemo<AccountWindowTheme>(() => ({
+    percent: accountThemePercent,
+    colors: [...activePaletteColors],
+  }), [accountThemePercent, activePaletteColors]);
+
+  useEffect(() => {
+    if (!accountActiveRef.current) return;
+    void updateAccountSwitcherTheme(accountWindowTheme).catch(() => undefined);
+  }, [accountWindowTheme]);
 
   const savePreferences = useCallback((next: WidgetPreferences) => {
     const previous = preferences;
@@ -333,7 +343,7 @@ export default function App() {
     clearWidgetMotionTimers();
     setCompact(false);
     void setWidgetExpanded(true);
-    void openAccountSwitcher().then((value) => {
+    void openAccountSwitcher(accountWindowTheme).then((value) => {
       setAccountVault(value);
       accountActiveRef.current = true;
       accountOpening.current = false;
@@ -342,7 +352,7 @@ export default function App() {
       accountOpening.current = false;
       setOperationError("Unable to open account manager.");
     });
-  }, [clearWidgetMotionTimers]);
+  }, [accountWindowTheme, clearWidgetMotionTimers]);
 
   const dismissAccounts = useCallback(() => {
     if (!accountActiveRef.current || accountClosing.current) return;

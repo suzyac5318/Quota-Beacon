@@ -37,6 +37,11 @@ export interface AccountWeeklyQuota {
   message: string | null;
 }
 
+export interface AccountWindowTheme {
+  percent: number | null;
+  colors: string[];
+}
+
 const mockVault: AccountVault = {
   profiles: [
     { id: "demo-personal", alias: "个人号", maskedEmail: "p***@example.com", isActive: true, credentialStatus: "ready" },
@@ -107,10 +112,16 @@ export async function cancelAccountLogin(taskId: string): Promise<void> {
   await invoke("cancel_account_login", { taskId });
 }
 
-export async function openAccountSwitcher(): Promise<AccountVault> {
+export async function openAccountSwitcher(theme: AccountWindowTheme): Promise<AccountVault> {
   if (!isTauri()) return mockVault;
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<AccountVault>("open_account_switcher");
+  return invoke<AccountVault>("open_account_switcher", { theme });
+}
+
+export async function updateAccountSwitcherTheme(theme: AccountWindowTheme): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("update_account_switcher_theme", { theme });
 }
 
 export async function closeAccountSwitcher(): Promise<void> {
@@ -143,7 +154,8 @@ export async function setAccountSwitcherExpanded(expanded: boolean, reducedMotio
 export async function listenAccountEvents(handlers: {
   onVault: (vault: AccountVault) => void;
   onSwitched?: (outcome: AccountSwitchOutcome) => void;
-  onOpened?: () => void;
+  onOpened?: (theme: AccountWindowTheme) => void;
+  onThemeChanged?: (theme: AccountWindowTheme) => void;
   onClosed?: () => void;
   onError?: (message: string) => void;
 }): Promise<() => void> {
@@ -151,10 +163,11 @@ export async function listenAccountEvents(handlers: {
   const { listen } = await import("@tauri-apps/api/event");
   const unlistenVault = await listen<AccountVault>("account-vault-changed", (event) => handlers.onVault(event.payload));
   const unlistenSwitched = await listen<AccountSwitchOutcome>("account-switch-completed", (event) => handlers.onSwitched?.(event.payload));
-  const unlistenOpened = await listen("account-switcher-opened", () => handlers.onOpened?.());
+  const unlistenOpened = await listen<AccountWindowTheme>("account-switcher-opened", (event) => handlers.onOpened?.(event.payload));
+  const unlistenTheme = await listen<AccountWindowTheme>("account-switcher-theme-changed", (event) => handlers.onThemeChanged?.(event.payload));
   const unlistenClosed = await listen("account-switcher-closed", () => handlers.onClosed?.());
   const unlistenError = await listen<string>("account-operation-error", (event) => handlers.onError?.(event.payload));
-  return () => { unlistenVault(); unlistenSwitched(); unlistenOpened(); unlistenClosed(); unlistenError(); };
+  return () => { unlistenVault(); unlistenSwitched(); unlistenOpened(); unlistenTheme(); unlistenClosed(); unlistenError(); };
 }
 
 export function accountCopy(language: Language) {

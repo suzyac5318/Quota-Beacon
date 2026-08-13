@@ -17,7 +17,12 @@ const vault = {
 const mocks = vi.hoisted(() => ({
   getAccountVault: vi.fn(),
   getAccountWeeklyQuotas: vi.fn(),
-  accountHandlers: null as null | { onSwitched?: () => void; onError?: (message: string) => void },
+  accountHandlers: null as null | {
+    onOpened?: (theme: { percent: number | null; colors: string[] }) => void;
+    onThemeChanged?: (theme: { percent: number | null; colors: string[] }) => void;
+    onSwitched?: () => void;
+    onError?: (message: string) => void;
+  },
 }));
 
 vi.mock("../lib/bridge", () => ({
@@ -30,7 +35,12 @@ vi.mock("../lib/accounts", async (importOriginal) => {
     ...actual,
     getAccountVault: mocks.getAccountVault,
     getAccountWeeklyQuotas: mocks.getAccountWeeklyQuotas,
-    listenAccountEvents: vi.fn(async (handlers: { onSwitched?: () => void; onError?: (message: string) => void }) => { mocks.accountHandlers = handlers; return () => {}; }),
+    listenAccountEvents: vi.fn(async (handlers: {
+      onOpened?: (theme: { percent: number | null; colors: string[] }) => void;
+      onThemeChanged?: (theme: { percent: number | null; colors: string[] }) => void;
+      onSwitched?: () => void;
+      onError?: (message: string) => void;
+    }) => { mocks.accountHandlers = handlers; return () => {}; }),
     setAccountSwitcherExpanded: vi.fn(async () => {}),
     closeAccountSwitcher: vi.fn(async () => {}),
     switchAccount: vi.fn(async () => ({ profile: vault.profiles[1], credentialsSwitched: true, restartRecommended: false })),
@@ -72,6 +82,24 @@ describe("AccountSwitcher", () => {
     expect(view.getAllByText("重新登录").length).toBeGreaterThan(0);
     expect(view.queryByText(/5\s*小时|分钟前|已过期/)).toBeNull();
     expect((view.getByRole("button", { name: "切换" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("uses the active five-hour quota theme and falls back to neutral glass", async () => {
+    const view = render(<AccountSwitcher />);
+    await waitFor(() => expect(mocks.accountHandlers).not.toBeNull());
+    const shell = view.container.querySelector(".account-switcher") as HTMLElement;
+    expect(shell.classList.contains("account-switcher--neutral")).toBe(true);
+
+    act(() => mocks.accountHandlers?.onOpened?.({
+      percent: 60,
+      colors: ["#eb5b58", "#f1a06f", "#f5d98f", "#e3f4b8", "#b9e4c9"],
+    }));
+    expect(shell.classList.contains("account-switcher--neutral")).toBe(false);
+    expect(shell.style.getPropertyValue("--card-base")).toBe("#e3f4b8");
+
+    act(() => mocks.accountHandlers?.onThemeChanged?.({ percent: null, colors: [] }));
+    expect(shell.classList.contains("account-switcher--neutral")).toBe(true);
+    expect(shell.style.getPropertyValue("--card-base")).toBe("");
   });
 
   it("dismisses switch success after ten seconds without clearing a later error", async () => {
