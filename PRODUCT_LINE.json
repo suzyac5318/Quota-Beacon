@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "productLine": "macos",
+  "expectedBranch": "macos",
+  "allowedBranchPrefixes": ["codex/macos-"],
+  "tagPrefix": "macos-v",
+  "nativeCredentialStore": "Keychain",
+  "forbiddenNativeImplementations": ["DPAPI", "DWM", "Win32"]
+}
