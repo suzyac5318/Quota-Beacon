@@ -4,7 +4,16 @@
 
 Quota Beacon 是基于 React、TypeScript、Vite、Tauri 2 和 Rust 的 Windows/macOS 桌面悬浮工具。它读取本机 Codex Desktop 登录状态并查询真实额度服务，显示 5 小时额度、本周额度、重置时间和重置机会。
 
-正式项目目录：`C:\Users\AC\Documents\QuotaFloat`
+本文件只适用于 Windows 正式工作树：`C:\Users\AC\Documents\QuotaFloat\work\windows-main`。
+
+## Product Line Identity
+
+- 当前产品线固定为 Windows；正式分支为 `main`，功能分支只能使用 `codex/windows-*`，版本和标签固定使用 `v*`。
+- 每次读取源码、修改、测试、提交或发布前，必须先执行 `npm run preflight:product-line -- --expect windows`。预检失败时立即停止，不得靠改分支名、跳过检查或修改身份文件绕过。
+- `PRODUCT_LINE.json` 是机器可读的平台身份；它必须与当前工作树、Git 分支、版本文件、Windows 原生配置和本文件一致。
+- macOS 正式线位于仓库的 `macos` 工作树，只能作为功能需求和交互语义参考。Windows 任务不得修改 Mac 工作树，不得把 `macos` merge、rebase、cherry-pick 或整文件复制到 `main`。
+- macOS 的 Keychain、`macOSPrivateApi`、`macos-private-api`、Universal、DMG 和真机结论不得写入 Windows 实现或验收结论；对应能力必须使用 DPAPI、Win32/DWM、Windows 构建与真实 Windows 验证。
+- 如果用户没有明确目标平台，先确认目标产品线；“QuotaFloat”“继续改进”“同步功能”等泛称不授权同时修改两条正式线。
 
 ## Product Lines And Personal Edition
 
@@ -82,6 +91,7 @@ Quota Beacon 是基于 React、TypeScript、Vite、Tauri 2 和 Rust 的 Windows/
 ## Change Discipline
 
 - 修改前先检查 Git 状态，保留用户已有未提交改动。
+- 修改前必须通过 `npm run preflight:product-line -- --expect windows`，并在最终回复中报告产品线、分支和版本。
 - 优先最小必要改动，不做无关重构，不批量格式化上游未格式化文件。
 - 从 `1.0.0` 起，每次完成一项开发后都必须创建一个版本化提交：同步更新根目录 `VERSION`、`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` 和 `CHANGELOG.md`。
 - 默认按语义化版本递增：修复用 patch，新功能用 minor，破坏性变更用 major；提交信息使用 `v<版本号>: <简短开发内容>`，并创建同名带注释 Git 标签。
@@ -97,6 +107,7 @@ Quota Beacon 是基于 React、TypeScript、Vite、Tauri 2 和 Rust 的 Windows/
 前端或样式改动后至少执行：
 
 ```powershell
+npm run preflight:product-line -- --expect windows
 npm test
 npm run build
 git diff --check

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "productLine": "windows",
+  "expectedBranch": "main",
+  "allowedBranchPrefixes": ["codex/windows-"],
+  "tagPrefix": "v",
+  "nativeCredentialStore": "DPAPI",
+  "forbiddenNativeImplementations": ["Keychain", "macOSPrivateApi", "macos-private-api"]
+}

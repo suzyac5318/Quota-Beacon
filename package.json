@@ -1,9 +1,10 @@
 {
   "name": "quota-beacon",
   "private": true,
-  "version": "1.9.0",
+  "version": "1.9.1",
   "type": "module",
   "scripts": {
+    "preflight:product-line": "node scripts/assert-product-line.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "vitest run",
