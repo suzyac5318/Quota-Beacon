@@ -22,7 +22,7 @@ expect_failure "$verifier" --root "$root" --tag macos-v999.0.0 --skip-lineage
 fixture="$(mktemp -d)"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/src-tauri"
-cp "$root/VERSION" "$root/package.json" "$root/package-lock.json" "$fixture/"
+cp "$root/VERSION" "$root/README.md" "$root/package.json" "$root/package-lock.json" "$fixture/"
 cp "$root/src-tauri/Cargo.toml" "$root/src-tauri/Cargo.lock" "$root/src-tauri/tauri.conf.json" "$fixture/src-tauri/"
 ROOT_PATH="$fixture" node <<'NODE'
 const fs = require("fs");
@@ -31,6 +31,19 @@ const file = path.join(process.env.ROOT_PATH, "package.json");
 const data = JSON.parse(fs.readFileSync(file, "utf8"));
 data.version = "0.0.0";
 fs.writeFileSync(file, JSON.stringify(data));
+NODE
+expect_failure "$verifier" --root "$fixture"
+
+cp "$root/package.json" "$fixture/package.json"
+ROOT_PATH="$fixture" node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const file = path.join(process.env.ROOT_PATH, "README.md");
+const content = fs.readFileSync(file, "utf8").replace(
+  /> 当前 macOS 版本：`[^`]+`/,
+  "> 当前 macOS 版本：`0.0.0`",
+);
+fs.writeFileSync(file, content);
 NODE
 expect_failure "$verifier" --root "$fixture"
 

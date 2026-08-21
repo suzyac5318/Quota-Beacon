@@ -50,6 +50,7 @@ check_version package-lock-root "$(read_json_version package-lock.json packages.
 check_version Cargo.toml "$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$root/src-tauri/Cargo.toml" | head -n 1)"
 check_version Cargo.lock "$(awk '/^name = "quota-beacon"$/{getline; if ($1 == "version") {gsub(/"/, "", $3); print $3; exit}}' "$root/src-tauri/Cargo.lock")"
 check_version tauri.conf.json "$(read_json_version src-tauri/tauri.conf.json version)"
+check_version README.md "$(sed -n 's/^> 当前 macOS 版本：`\([^`]*\)`（独立 `macos` 版本线）$/\1/p' "$root/README.md")"
 
 if [[ -n "$tag" ]]; then
   [[ "$tag" =~ ^macos-v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || {

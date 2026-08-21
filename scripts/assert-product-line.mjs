@@ -63,6 +63,9 @@ const cargoVersion = cargoToml.match(/\[package\][\s\S]*?^version\s*=\s*"([^"]+)
 const cargoLockVersion = readText("src-tauri/Cargo.lock").match(
   /\[\[package\]\]\s+name\s*=\s*"quota-beacon"\s+version\s*=\s*"([^"]+)"/m,
 )?.[1];
+const readmeVersion = readText("README.md").match(
+  /> 当前 macOS 版本：`([^`]+)`（独立 `macos` 版本线）/,
+)?.[1];
 const versionSources = {
   VERSION: version,
   "package.json": packageVersion,
@@ -70,6 +73,7 @@ const versionSources = {
   "src-tauri/Cargo.toml": cargoVersion,
   "src-tauri/Cargo.lock": cargoLockVersion,
   "src-tauri/tauri.conf.json": tauriConfig.version,
+  "README.md": readmeVersion,
 };
 for (const [source, sourceVersion] of Object.entries(versionSources)) {
   if (sourceVersion !== version) {

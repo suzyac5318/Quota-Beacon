@@ -5,6 +5,7 @@ import cargoLock from "../src-tauri/Cargo.lock?raw";
 import packageJson from "../package.json";
 import packageLock from "../package-lock.json";
 import versionFile from "../VERSION?raw";
+import readme from "../README.md?raw";
 import accountVaultSource from "../src-tauri/src/account_vault.rs?raw";
 
 type TransparentWindowConfig = {
@@ -47,6 +48,9 @@ describe("macOS version isolation", () => {
     expect(tauriConfig.version).toBe(packageJson.version);
     expect(cargoVersion).toBe(packageJson.version);
     expect(cargoLockVersion).toBe(packageJson.version);
+    expect(readme).toContain(
+      `> 当前 macOS 版本：\`${packageJson.version}\`（独立 \`macos\` 版本线）`,
+    );
   });
 });
 
