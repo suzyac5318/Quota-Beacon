@@ -580,6 +580,17 @@ fn poll_account_login(
     cleanup_login_task(state.inner(), &task.task_root);
     match import {
         Ok(view) => {
+            if let Some(profile_id) = task.replace_profile_id.as_deref() {
+                if let Ok(mut cache) = state.account_quota_cache.lock() {
+                    cache.remove(profile_id);
+                }
+                if view.active_profile_id.as_deref() == Some(profile_id) {
+                    if let Ok(mut cache) = state.snapshot_cache.lock() {
+                        *cache = None;
+                    }
+                    let _ = app.emit_to("widget", "refresh-requested", "account-relogin");
+                }
+            }
             let _ = app.emit_to("widget", "account-vault-changed", view.clone());
             let _ = app.emit_to("account-switcher", "account-vault-changed", view);
             let _ = refresh_tray_menu(&app);

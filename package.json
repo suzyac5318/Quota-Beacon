@@ -1,7 +1,7 @@
 {
   "name": "quota-beacon",
   "private": true,
-  "version": "1.9.1",
+  "version": "1.9.2",
   "type": "module",
   "scripts": {
     "preflight:product-line": "node scripts/assert-product-line.mjs",

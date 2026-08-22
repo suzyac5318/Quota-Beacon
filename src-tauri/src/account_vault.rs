@@ -224,6 +224,7 @@ impl AccountVault {
         raw: &[u8],
     ) -> Result<AccountVaultView, String> {
         self.ensure_ready()?;
+        let current_login_replaced = self.view()?.active_profile_id.as_deref() == Some(profile_id);
         if raw.len() as u64 > codex::MAX_AUTH_BYTES {
             return Err("Codex login data is too large.".into());
         }
@@ -241,6 +242,9 @@ impl AccountVault {
         profile.masked_email = identity.email.as_deref().map(mask_email);
         profile.updated_at = Utc::now().to_rfc3339();
         self.write_credentials(profile_id, raw)?;
+        if current_login_replaced {
+            atomic_replace(&self.auth_path, raw)?;
+        }
         self.persist_state()?;
         self.view()
     }
@@ -777,6 +781,33 @@ mod tests {
             reloaded.view().unwrap().active_profile_id.as_deref(),
             Some(b_id.as_str())
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn relogin_updates_active_auth_without_replacing_an_inactive_login() {
+        let (root, auth, mut vault) = test_vault();
+        let account_a = fixture("account-a", "alice@example.com", "a-old");
+        let account_a_refreshed = fixture("account-a", "alice@example.com", "a-new");
+        let account_b = fixture("account-b", "bob@example.com", "b");
+
+        atomic_write(&auth, &account_a).unwrap();
+        let a_id = vault
+            .save_current("Personal")
+            .unwrap()
+            .active_profile_id
+            .unwrap();
+        vault
+            .replace_credentials(&a_id, &account_a_refreshed)
+            .unwrap();
+        assert_eq!(codex::read_auth_bytes(&auth).unwrap(), account_a_refreshed);
+
+        atomic_replace(&auth, &account_b).unwrap();
+        vault.save_current("Work").unwrap();
+        let account_a_newer = fixture("account-a", "alice@example.com", "a-newer");
+        vault.replace_credentials(&a_id, &account_a_newer).unwrap();
+        assert_eq!(codex::read_auth_bytes(&auth).unwrap(), account_b);
+
         fs::remove_dir_all(root).unwrap();
     }
 }
