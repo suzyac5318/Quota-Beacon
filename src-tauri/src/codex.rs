@@ -1,4 +1,5 @@
 use std::{fs, path::{Path, PathBuf}};
+use std::time::Duration;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION};
@@ -9,6 +10,7 @@ use crate::models::{ProviderSnapshot, UsageWindow};
 const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CREDITS_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
+const OPTIONAL_CREDITS_GRACE: Duration = Duration::from_millis(200);
 pub(crate) const MAX_AUTH_BYTES: u64 = 256 * 1024;
 
 struct Auth {
@@ -97,6 +99,12 @@ pub(crate) fn credential_identity(raw: &[u8]) -> Result<CredentialIdentity, &'st
         .map(str::to_owned)
         .or_else(|| pick_string(tokens, &["id_token", "idToken"]).and_then(email_from_jwt));
     Ok(CredentialIdentity { account_id, email })
+}
+
+pub(crate) fn current_credential_identity() -> Result<CredentialIdentity, &'static str> {
+    let path = auth_path().ok_or("Codex login was not found.")?;
+    let raw = read_auth_bytes(&path)?;
+    credential_identity(&raw)
 }
 
 fn load_auth() -> Result<Auth, &'static str> {
@@ -372,10 +380,25 @@ async fn fetch_snapshot_with_auth(client: &reqwest::Client, auth: Auth) -> Provi
         Err(message) => return ProviderSnapshot::failure("signed_out", message),
     };
 
-    let (usage_result, credits_result) = tokio::join!(
-        client.get(USAGE_URL).headers(request_headers.clone()).send(),
-        client.get(CREDITS_URL).headers(request_headers).send(),
-    );
+    let usage_request = client.get(USAGE_URL).headers(request_headers.clone()).send();
+    let credits_request = client.get(CREDITS_URL).headers(request_headers).send();
+    tokio::pin!(usage_request);
+    tokio::pin!(credits_request);
+
+    let mut credits_result = None;
+    let usage_result = tokio::select! {
+        result = &mut usage_request => result,
+        result = &mut credits_request => {
+            credits_result = Some(result);
+            usage_request.await
+        }
+    };
+    let credits_deadline = tokio::time::Instant::now() + OPTIONAL_CREDITS_GRACE;
+    if credits_result.is_none() {
+        credits_result = tokio::time::timeout_at(credits_deadline, &mut credits_request)
+            .await
+            .ok();
+    }
 
     let usage_response = match usage_result {
         Ok(response) if response.status().is_success() => response,
@@ -450,7 +473,14 @@ async fn fetch_snapshot_with_auth(client: &reqwest::Client, auth: Auth) -> Provi
         .unwrap_or_default();
 
     let (reset_credits, reset_credit_expires_at) = match credits_result {
-        Ok(response) if response.status().is_success() => match limited_json(response).await.ok() {
+        Some(Ok(response)) if response.status().is_success() => match tokio::time::timeout_at(
+            credits_deadline,
+            limited_json(response),
+        )
+        .await
+        .ok()
+        .and_then(Result::ok)
+        {
             Some(value) => (
                 integer(
                     &value,

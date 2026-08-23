@@ -46,6 +46,7 @@ vi.mock("./lib/accounts", () => ({
 
 vi.mock("./lib/bridge", () => ({
   closePalettePreview: vi.fn(async () => {}),
+  fetchCachedSnapshots: vi.fn(async () => []),
   fetchSnapshots: vi.fn(),
   fetchTokenUsage: vi.fn(async () => ({
     inputTokens: 0,
@@ -97,6 +98,23 @@ describe("quota refresh coordination", () => {
     expect(card).not.toBeNull();
     fireEvent.mouseEnter(card!);
     expect(fetchSnapshots).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("shows the persisted quota while the first live refresh is pending", async () => {
+    const { fetchCachedSnapshots } = await import("./lib/bridge");
+    let resolveSnapshots!: (value: ProviderSnapshot[]) => void;
+    vi.mocked(fetchCachedSnapshots).mockResolvedValueOnce([{ ...snapshot, status: "stale", message: "Updating latest quota." }]);
+    vi.mocked(fetchSnapshots).mockReturnValueOnce(new Promise<ProviderSnapshot[]>((resolve) => {
+      resolveSnapshots = resolve;
+    }));
+
+    const view = render(<App />);
+    await waitFor(() => expect(view.getAllByText("74")).toHaveLength(2));
+    expect(view.container.querySelector(".quota-card--stale")).not.toBeNull();
+
+    await act(async () => resolveSnapshots([snapshot]));
+    await waitFor(() => expect(view.container.querySelector(".quota-card--ok")).not.toBeNull());
     view.unmount();
   });
 

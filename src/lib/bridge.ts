@@ -45,6 +45,12 @@ export async function fetchSnapshots(force = false): Promise<ProviderSnapshot[]>
   return invoke<ProviderSnapshot[]>(force ? "refresh_snapshots" : "get_snapshots");
 }
 
+export async function fetchCachedSnapshots(): Promise<ProviderSnapshot[]> {
+  if (!isTauri()) return [];
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<ProviderSnapshot[]>("get_cached_snapshots");
+}
+
 export async function fetchTokenUsage(): Promise<TokenUsageSummary> {
   if (!isTauri()) return mockTokenUsage;
   const { invoke } = await import("@tauri-apps/api/core");

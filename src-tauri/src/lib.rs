@@ -19,7 +19,7 @@ use std::{
 };
 
 use models::{AccountWeeklyQuota, ProviderSnapshot, TokenUsageSummary, WidgetPreferences};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -34,6 +34,8 @@ struct AppState {
     preferences_path: PathBuf,
     fetch_lock: tokio::sync::Mutex<()>,
     snapshot_cache: Mutex<Option<(Instant, Vec<ProviderSnapshot>)>>,
+    persisted_snapshots: Mutex<Vec<ProviderSnapshot>>,
+    snapshot_cache_path: PathBuf,
     account_quota_cache: Mutex<HashMap<String, (u64, Instant, AccountWeeklyQuota)>>,
     account_generation: AtomicU64,
     token_usage_cache: Arc<Mutex<token_usage::TokenUsageCache>>,
@@ -45,6 +47,92 @@ struct AppState {
 }
 
 const INACTIVE_ACCOUNT_QUOTA_TTL: Duration = Duration::from_secs(5 * 60);
+const SNAPSHOT_CACHE_SCHEMA_VERSION: u8 = 1;
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedSnapshotCache {
+    schema_version: u8,
+    account_id: String,
+    snapshots: Vec<ProviderSnapshot>,
+}
+
+fn snapshots_for_startup(values: &[ProviderSnapshot]) -> Vec<ProviderSnapshot> {
+    values
+        .iter()
+        .filter(|snapshot| snapshot.status == "ok" && (snapshot.short_window.is_some() || snapshot.weekly_window.is_some()))
+        .cloned()
+        .map(|mut snapshot| {
+            snapshot.status = "stale".into();
+            snapshot.message = Some("Updating latest quota.".into());
+            snapshot
+        })
+        .collect()
+}
+
+fn decode_persisted_snapshots(raw: &[u8], account_id: &str) -> Vec<ProviderSnapshot> {
+    let Ok(cache) = serde_json::from_slice::<PersistedSnapshotCache>(raw) else {
+        return Vec::new();
+    };
+    if cache.schema_version != SNAPSHOT_CACHE_SCHEMA_VERSION || cache.account_id != account_id {
+        return Vec::new();
+    }
+    snapshots_for_startup(&cache.snapshots)
+}
+
+fn load_persisted_snapshots(path: &PathBuf) -> Vec<ProviderSnapshot> {
+    let Ok(identity) = codex::current_credential_identity() else {
+        return Vec::new();
+    };
+    fs::read(path)
+        .ok()
+        .map(|raw| decode_persisted_snapshots(&raw, &identity.account_id))
+        .unwrap_or_default()
+}
+
+fn persist_successful_snapshots(path: &PathBuf, values: &[ProviderSnapshot]) -> Result<(), String> {
+    let successful = values.iter().filter(|snapshot| snapshot.status == "ok").cloned().collect::<Vec<_>>();
+    if successful.is_empty() {
+        return Ok(());
+    }
+    let identity = codex::current_credential_identity().map_err(str::to_string)?;
+    let cache = PersistedSnapshotCache {
+        schema_version: SNAPSHOT_CACHE_SCHEMA_VERSION,
+        account_id: identity.account_id,
+        snapshots: successful,
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|_| "failed to create snapshot cache directory".to_string())?;
+    }
+    let serialized = serde_json::to_vec(&cache).map_err(|_| "failed to serialize snapshot cache".to_string())?;
+    let temporary = path.with_extension("json.tmp");
+    let backup = path.with_extension("json.bak");
+    let mut file = fs::File::create(&temporary).map_err(|_| "failed to create temporary snapshot cache".to_string())?;
+    file.write_all(&serialized)
+        .and_then(|_| file.sync_all())
+        .map_err(|_| "failed to write snapshot cache".to_string())?;
+    if path.exists() {
+        let _ = fs::remove_file(&backup);
+        fs::rename(path, &backup).map_err(|_| "failed to back up snapshot cache".to_string())?;
+    }
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::rename(&backup, path);
+        return Err(format!("failed to commit snapshot cache: {error}"));
+    }
+    Ok(())
+}
+
+fn clear_persisted_snapshots(state: &AppState) {
+    if let Ok(mut values) = state.persisted_snapshots.lock() {
+        values.clear();
+    }
+    match fs::remove_file(&state.snapshot_cache_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!("failed to clear snapshot cache: {error}"),
+    }
+    let _ = fs::remove_file(state.snapshot_cache_path.with_extension("json.bak"));
+}
 
 fn inactive_account_quota_is_fresh(updated_at: Instant) -> bool {
     updated_at.elapsed() < INACTIVE_ACCOUNT_QUOTA_TTL
@@ -88,6 +176,14 @@ async fn fetch_current_account_snapshots(state: &AppState) -> Vec<ProviderSnapsh
             *cache = Some((Instant::now(), values.clone()));
         }
         if generation == state.account_generation.load(Ordering::SeqCst) {
+            if values.iter().any(|snapshot| snapshot.status == "ok") {
+                if let Err(error) = persist_successful_snapshots(&state.snapshot_cache_path, &values) {
+                    eprintln!("{error}");
+                }
+                if let Ok(mut cached) = state.persisted_snapshots.lock() {
+                    *cached = snapshots_for_startup(&values);
+                }
+            }
             return values;
         }
     }
@@ -194,6 +290,11 @@ async fn get_snapshots(state: State<'_, AppState>) -> Result<Vec<ProviderSnapsho
 #[tauri::command]
 async fn refresh_snapshots(state: State<'_, AppState>) -> Result<Vec<ProviderSnapshot>, String> {
     Ok(fetch_snapshots_uncached(&state).await)
+}
+
+#[tauri::command]
+fn get_cached_snapshots(state: State<'_, AppState>) -> Vec<ProviderSnapshot> {
+    state.persisted_snapshots.lock().map(|values| values.clone()).unwrap_or_default()
 }
 
 #[tauri::command]
@@ -441,6 +542,7 @@ async fn switch_account_internal(
     if let Ok(mut cache) = state.snapshot_cache.lock() {
         *cache = None;
     }
+    clear_persisted_snapshots(state);
     let _ = publish_account_vault(app, state);
     let _ = app.emit_to("widget", "account-switch-completed", outcome.clone());
     let _ = app.emit_to("account-switcher", "account-switch-completed", outcome.clone());
@@ -1202,9 +1304,11 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_config_dir()?;
             let preferences_path = data_dir.join("preferences.json");
+            let snapshot_cache_path = data_dir.join("snapshot-cache.json");
             let accounts_root = data_dir.join("accounts");
             let account_login_root = accounts_root.join("login-tasks");
             let preferences = load_preferences(&preferences_path);
+            let persisted_snapshots = load_persisted_snapshots(&snapshot_cache_path);
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(12))
                 .redirect(reqwest::redirect::Policy::none())
@@ -1218,6 +1322,8 @@ pub fn run() {
                 preferences_path,
                 fetch_lock: tokio::sync::Mutex::new(()),
                 snapshot_cache: Mutex::new(None),
+                persisted_snapshots: Mutex::new(persisted_snapshots),
+                snapshot_cache_path,
                 account_quota_cache: Mutex::new(HashMap::new()),
                 account_generation: AtomicU64::new(0),
                 token_usage_cache: Arc::clone(&token_usage_cache),
@@ -1255,6 +1361,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_snapshots,
             refresh_snapshots,
+            get_cached_snapshots,
             get_token_usage,
             get_preferences,
             set_preferences,
@@ -1372,6 +1479,49 @@ pub fn run() {
 #[cfg(test)]
 mod account_quota_tests {
     use super::*;
+
+    fn successful_snapshot() -> ProviderSnapshot {
+        ProviderSnapshot {
+            provider: "codex".into(),
+            display_name: "CODEX".into(),
+            plan: Some("PRO".into()),
+            short_window: Some(models::UsageWindow {
+                remaining_percent: 74.0,
+                resets_at: None,
+                window_seconds: 18_000,
+            }),
+            weekly_window: None,
+            reset_credits: None,
+            reset_credit_expires_at: Vec::new(),
+            updated_at: "2026-08-23T00:00:00Z".into(),
+            status: "ok".into(),
+            message: None,
+        }
+    }
+
+    #[test]
+    fn persisted_snapshots_are_account_bound_and_loaded_as_stale() {
+        let cache = PersistedSnapshotCache {
+            schema_version: SNAPSHOT_CACHE_SCHEMA_VERSION,
+            account_id: "account-a".into(),
+            snapshots: vec![successful_snapshot()],
+        };
+        let raw = serde_json::to_vec(&cache).unwrap();
+
+        let loaded = decode_persisted_snapshots(&raw, "account-a");
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].status, "stale");
+        assert_eq!(loaded[0].short_window.as_ref().unwrap().remaining_percent, 74.0);
+        assert!(decode_persisted_snapshots(&raw, "account-b").is_empty());
+    }
+
+    #[test]
+    fn failed_snapshots_are_not_offered_as_startup_cache() {
+        assert!(snapshots_for_startup(&[ProviderSnapshot::failure(
+            "unavailable",
+            "temporary failure",
+        )]).is_empty());
+    }
 
     #[test]
     fn inactive_account_quota_cache_expires_at_five_minutes() {

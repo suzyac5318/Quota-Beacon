@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { QuotaCard } from "./components/QuotaCard";
 import { closeAccountSwitcher, getAccountVault, listenAccountEvents, openAccountSwitcher, updateAccountSwitcherTheme, type AccountVault, type AccountWindowTheme } from "./lib/accounts";
-import { closePalettePreview, fetchSnapshots, fetchTokenUsage, getPreferences, listenDesktopEvents, listenPalettePreview, openPalettePreview, setAlwaysOnTop, setWidgetClip, setWidgetExpanded, startDragging, syncWidgetCssScale, updatePreferences } from "./lib/bridge";
+import { closePalettePreview, fetchCachedSnapshots, fetchSnapshots, fetchTokenUsage, getPreferences, listenDesktopEvents, listenPalettePreview, openPalettePreview, setAlwaysOnTop, setWidgetClip, setWidgetExpanded, startDragging, syncWidgetCssScale, updatePreferences } from "./lib/bridge";
 import { clampPercent, getPrimaryQuota } from "./lib/format";
 import { copy, nextLanguage, normalizeLanguage } from "./lib/i18n";
 import { DEFAULT_PALETTE_COLORS, normalizePaletteColors } from "./lib/quotaTheme";
@@ -32,6 +32,7 @@ export default function App() {
   const [conversationTokenUsage, setConversationTokenUsage] = useState<ConversationTokenUsage>({ conversationId: null, totalTokens: null });
   const [accountVault, setAccountVault] = useState<AccountVault | null>(null);
   const failures = useRef(0);
+  const hasSuccessfulRefresh = useRef(false);
   const nextAutoRefreshAt = useRef(0);
   const refreshInFlight = useRef<Promise<void> | null>(null);
   const previousPrimary = useRef(new Map<string, number>());
@@ -98,9 +99,10 @@ export default function App() {
       try {
         const values = await fetchSnapshots(true);
         const hasFailure = values.some((item) => item.status !== "ok");
-        const schedule = nextRefreshSchedule(failures.current, hasFailure);
+        const schedule = nextRefreshSchedule(failures.current, hasFailure, !hasSuccessfulRefresh.current);
         failures.current = schedule.failures;
         nextAutoRefreshAt.current = Date.now() + schedule.delayMs;
+        if (!hasFailure) hasSuccessfulRefresh.current = true;
         for (const item of values) {
           const nextPrimary = getPrimaryQuota(item)?.window.remainingPercent;
           const previous = previousPrimary.current.get(item.provider);
@@ -118,7 +120,7 @@ export default function App() {
         }
         setSnapshots((current) => mergeSnapshots(current, values));
       } catch {
-        const schedule = nextRefreshSchedule(failures.current, true);
+        const schedule = nextRefreshSchedule(failures.current, true, !hasSuccessfulRefresh.current);
         failures.current = schedule.failures;
         nextAutoRefreshAt.current = Date.now() + schedule.delayMs;
         setSnapshots((current) => current.length > 0
@@ -171,6 +173,11 @@ export default function App() {
       }
       if (!cancelled) setOperationError("Unable to read settings. Defaults are in use.");
     };
+    void fetchCachedSnapshots().then((values) => {
+      if (!cancelled && values.length > 0) {
+        setSnapshots((current) => current.length > 0 ? mergeSnapshots(values, current) : values);
+      }
+    }).catch(() => undefined);
     void refresh("manual");
     void getAccountVault().then(setAccountVault).catch(() => undefined);
     void loadPreferences();

@@ -12,7 +12,15 @@ describe("quota refresh policy", () => {
     expect(nextRefreshSchedule(2, true)).toEqual({ failures: 3, delayMs: 120_000 });
   });
 
+  it("retries cold-start failures quickly before entering the normal backoff", () => {
+    expect(nextRefreshSchedule(0, true, true)).toEqual({ failures: 1, delayMs: 2_000 });
+    expect(nextRefreshSchedule(1, true, true)).toEqual({ failures: 2, delayMs: 5_000 });
+    expect(nextRefreshSchedule(2, true, true)).toEqual({ failures: 3, delayMs: 10_000 });
+    expect(nextRefreshSchedule(3, true, true)).toEqual({ failures: 4, delayMs: 30_000 });
+  });
+
   it("caps repeated failures at the longest delay", () => {
     expect(nextRefreshSchedule(99, true)).toEqual({ failures: 3, delayMs: 120_000 });
+    expect(nextRefreshSchedule(99, true, true)).toEqual({ failures: 6, delayMs: 120_000 });
   });
 });
