@@ -4,16 +4,17 @@
 
 Quota Beacon 是基于 React、TypeScript、Vite、Tauri 2 和 Rust 的 Windows/macOS 桌面悬浮工具。它读取本机 Codex Desktop 登录状态并查询真实额度服务，显示 5 小时额度、本周额度、重置时间和重置机会。
 
-本文件只适用于 macOS 正式工作树：`C:\Users\AC\Documents\QuotaFloat`。
+本文件是本机 Quota Beacon 项目的产品线路由与开发规则。Windows 正式工作树位于 `C:\Users\AC\Documents\QuotaFloat\work\windows-main`，macOS 正式工作树位于 `C:\Users\AC\Documents\QuotaFloat`。
 
-## Product Line Identity
+## Product Line Identity And Default Routing
 
-- 当前产品线固定为 macOS；正式分支为 `macos`，功能分支只能使用 `codex/macos-*`，版本和标签固定使用 `macos-v*`。
-- 每次读取源码、修改、测试、提交或发布前，必须先执行 `npm run preflight:product-line -- --expect macos`。预检失败时立即停止，不得靠改分支名、跳过检查或修改身份文件绕过。
-- `PRODUCT_LINE.json` 是机器可读的平台身份；它必须与当前工作树、Git 分支、版本文件、Mac 原生配置和本文件一致。
-- Windows 正式线位于 `work/windows-main`，仅作为功能需求和交互语义参考。Mac 任务不得修改该工作树，不得把 Windows `main` merge、rebase、cherry-pick 或整文件复制到 `macos`。
-- Windows 的 Win32、DWM、DPAPI、EXE、安装目录和实机结论不得写入 Mac 实现或验收结论；对应能力必须使用 macOS 原生窗口机制、Keychain、Universal 构建、Mac CI 和真实 Mac 验证。
-- 如果用户没有明确目标平台，先确认目标产品线；“QuotaFloat”“继续改进”“同步功能”等泛称不授权同时修改两条正式线。
+- 本机默认开发产品线固定为 Windows。只要用户没有明确说“Mac”“macOS”或指定 Mac 分支/产物，就必须把“QuotaFloat”“继续开发”“修复”“优化”“同步功能”等泛称路由到 Windows 正式工作树 `work/windows-main`，不得读取、修改、测试、构建、提交或发布 Mac 基线。
+- Windows 正式线位于 `work/windows-main`；正式分支为 `main`，功能分支只能使用 `codex/windows-*`，正式版本和标签使用 `v*`。进入该工作树后，读取源码、修改、测试、构建、提交或发布前必须先执行 `npm run preflight:product-line -- --expect windows`。
+- 只有用户在当前任务中明确指定 Mac 或 macOS，才允许使用根工作树 `C:\Users\AC\Documents\QuotaFloat`。Mac 正式分支为 `macos`，功能分支只能使用 `codex/macos-*`，版本和标签固定使用 `macos-v*`；执行 Mac 任务前必须先运行 `npm run preflight:product-line -- --expect macos`。
+- 如果用户同时提到两条产品线但没有明确要求都修改，仍默认只修改 Windows，并把 Mac 视为只读参考；只有明确授权“双线开发”时才分别处理和验证两条线。
+- `PRODUCT_LINE.json` 是机器可读的平台身份；它必须与目标工作树、Git 分支、版本文件、原生配置和本文件一致。预检失败时立即停止，不得靠改分支名、跳过检查或修改身份文件绕过。
+- Windows 与 Mac 是完全独立的正式线。不得在两者之间 merge、rebase、cherry-pick 或整文件复制；跨线同步必须重新按目标平台实现并独立验证。
+- Windows 的 Win32、DWM、DPAPI、EXE、安装目录和实机结论不得写入 Mac 实现或验收结论；Mac 的原生窗口机制、Keychain、Universal 构建、Mac CI 和真机结论也不得当作 Windows 证据。
 
 ## Core Product Rules
 
@@ -60,7 +61,9 @@ Quota Beacon 是基于 React、TypeScript、Vite、Tauri 2 和 Rust 的 Windows/
 - 必须支持 `prefers-reduced-motion: reduce`，在用户要求减少动态效果时关闭非必要动画。
 - 背景变化后仍需保证主数字、说明文字、按钮和滑块具有足够对比度。
 
-## High-DPI And Transparent Window Rules
+## macOS-Only High-DPI And Transparent Window Rules
+
+本节仅在用户明确指定 Mac/macOS 产品线时适用，不得据此把默认 Windows 任务路由到 Mac 基线。
 
 - 不要给占满窗口的卡片设置固定 `min-width` 或 `min-height`；Retina 或非整数缩放可能导致右侧和底部溢出，从而裁掉三个圆角。
 - 根节点、卡片和透明 Tauri 窗口的尺寸、背景与裁切边界必须一致。
@@ -82,11 +85,11 @@ Quota Beacon 是基于 React、TypeScript、Vite、Tauri 2 和 Rust 的 Windows/
 ## Change Discipline
 
 - 修改前先检查 Git 状态，保留用户已有未提交改动。
-- 修改前必须通过 `npm run preflight:product-line -- --expect macos`，并在最终回复中报告产品线、分支和版本。
+- 修改前必须进入目标工作树并通过对应预检：默认 Windows 使用 `npm run preflight:product-line -- --expect windows`；只有明确的 Mac 任务使用 `npm run preflight:product-line -- --expect macos`。最终回复必须报告实际产品线、工作树、分支和版本。
 - 优先最小必要改动，不做无关重构，不批量格式化上游未格式化文件。
-- 从 `1.0.0` 起，每次完成一项开发后都必须创建一个版本化提交：同步更新根目录 `VERSION`、`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` 和 `CHANGELOG.md`。
-- 默认按语义化版本递增：修复用 patch，新功能用 minor，破坏性变更用 major；提交信息使用 `macos-v<版本号>: <简短开发内容>`，并创建同名带注释 Git 标签。
-- 当前 `upstream` 仅用于读取上游历史，严禁推送；`origin` 也不得默认推送。只有用户在当前任务中明确授权“推送 Mac 分支和标签”后，才能推送对应提交与标签。
+- 从 `1.0.0` 起，每次完成一项产品开发后都必须在实际目标工作树创建版本化提交：同步更新该工作树的 `VERSION`、`package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` 和 `CHANGELOG.md`。
+- 默认按语义化版本递增：修复用 patch，新功能用 minor，破坏性变更用 major。Windows 提交信息使用 `v<版本号>: <简短开发内容>` 并创建同名带注释标签；Mac 使用 `macos-v<版本号>: <简短开发内容>` 并创建同名带注释标签。
+- 当前 `upstream` 仅用于读取上游历史，严禁推送；`origin` 也不得默认推送。只有用户在当前任务中明确授权推送目标产品线的分支和标签后，才能推送对应提交与标签。
 - 用户授权修改、构建、本地提交或创建本地标签，不代表授权 GitHub 写入。未经明确允许，不执行 `git push`，不创建 PR、Release 或其他远端内容，也不覆盖 Git 历史。
 - 替换本机运行程序前先备份上一版可执行文件。
 - 临时截图、浏览器记录和构建缓存不得加入 Git。
@@ -94,10 +97,11 @@ Quota Beacon 是基于 React、TypeScript、Vite、Tauri 2 和 Rust 的 Windows/
 
 ## Required Verification
 
-前端或样式改动后至少执行：
+前端或样式改动后，必须在目标工作树至少执行：
 
 ```powershell
-npm run preflight:product-line -- --expect macos
+# 默认 Windows；仅在用户明确指定 Mac 时把 windows 改为 macos
+npm run preflight:product-line -- --expect windows
 npm test
 npm run build
 git diff --check
@@ -110,24 +114,24 @@ cargo check --manifest-path src-tauri\Cargo.toml
 npm run tauri build -- --no-bundle
 ```
 
-注意：Windows 宿主上的 Rust/Tauri 检查只能作为源码和宿主编译证据，不能替代 macOS Universal、Keychain、原生窗口或真机验收。上游部分 Rust 文件可能不符合当前新版 `rustfmt`；不要仅为通过全库格式检查而修改无关文件。
+注意：每条产品线都必须使用自身的平台证据完成验收。Windows 宿主上的 Rust/Tauri 检查不能替代 macOS Universal、Keychain、原生窗口或真机验收；Mac 构建也不能替代 Windows DPAPI、DWM、安装包或真机验收。上游部分 Rust 文件可能不符合当前新版 `rustfmt`；不要仅为通过全库格式检查而修改无关文件。
 
 视觉或窗口交互改动后还需验证：
 
 - 浏览器按实际窗口尺寸检查布局，例如主窗口 `320×320`、控制窗 `320×104`。
 - 检查 `100%`、`60%`、`35%`、`20%`、`0%` 关键颜色节点。
-- 在真实 Mac Tauri 程序中检查展开、折叠、打开预览、滑块变化、完成退出和再次点击图标退出。
+- 在目标平台的真实 Tauri 程序中检查展开、折叠、打开预览、滑块变化、完成退出和再次点击图标退出。
 - 验证主窗口移动时控制窗跟随，以及屏幕底部空间不足时显示到上方。
 - 验证退出预览后恢复最新真实额度和用户原有置顶设置。
-- 验证 Universal 构建、签名、DMG/ZIP 与 SHA-256；真实 Mac 安装后程序能够正常启动并响应。
+- Windows 任务验证 Windows 构建、安装产物、SHA-256 和真实 Windows 启动响应；明确的 Mac 任务验证 Universal 构建、签名、DMG/ZIP、SHA-256 和真实 Mac 安装启动响应。
 
 ## Definition Of Done
 
 只有同时满足以下条件才算完成：
 
 - 用户要求的行为已实现，现有圆角修复、10 秒刷新和 101 级配色未回归。
-- 产品线预检、自动测试、TypeScript/Vite 构建、Rust 检查及 Mac CI/Universal 构建通过。
+- 目标产品线预检、自动测试、TypeScript/Vite 构建、Rust 检查及对应平台的 CI/正式构建通过。
 - 关键颜色和窗口布局完成视觉检查。
 - 真实桌面双窗口打开、关闭和尺寸验证成功。
-- 若本次包含安装交付，当前 Mac 运行版本已安全替换，上一版仍有备份。
+- 若本次包含安装交付，目标平台的当前运行版本已安全替换，上一版仍有备份。
 - Git 工作区只包含预期源码改动，没有临时文件或无关格式化变更。
