@@ -30,7 +30,7 @@ const snapshot: ProviderSnapshot = {
 
 const accountHarness = vi.hoisted(() => ({
   handlers: null as null | { onSwitched?: () => void; onClosed?: () => void },
-  desktopHandlers: null as null | { onFocusLost: () => void },
+  desktopHandlers: null as null | { onRefresh: (mode: "auto" | "manual" | "account-relogin") => void; onFocusLost: () => void },
 }));
 
 vi.mock("./lib/accounts", () => ({
@@ -57,7 +57,7 @@ vi.mock("./lib/bridge", () => ({
     updatedAt: new Date().toISOString(),
   })),
   getPreferences: vi.fn(async () => preferences),
-  listenDesktopEvents: vi.fn(async (handlers: { onFocusLost: () => void }) => {
+  listenDesktopEvents: vi.fn(async (handlers: { onRefresh: (mode: "auto" | "manual" | "account-relogin") => void; onFocusLost: () => void }) => {
     accountHarness.desktopHandlers = handlers;
     return () => {};
   }),
@@ -117,6 +117,26 @@ describe("quota refresh coordination", () => {
 
     await act(async () => resolveNext([nextSnapshot]));
     await waitFor(() => expect(view.getAllByText("63")).toHaveLength(2));
+    view.unmount();
+  });
+
+  it("queues a forced refresh after an active account relogin", async () => {
+    let resolveInitial!: (value: ProviderSnapshot[]) => void;
+    const refreshedSnapshot = { ...snapshot, shortWindow: { ...snapshot.shortWindow!, remainingPercent: 63 } };
+    vi.mocked(fetchSnapshots)
+      .mockReturnValueOnce(new Promise<ProviderSnapshot[]>((resolve) => { resolveInitial = resolve; }))
+      .mockResolvedValueOnce([refreshedSnapshot]);
+
+    const view = render(<App />);
+    await waitFor(() => expect(fetchSnapshots).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(accountHarness.desktopHandlers).not.toBeNull());
+
+    act(() => accountHarness.desktopHandlers?.onRefresh("account-relogin"));
+    expect(fetchSnapshots).toHaveBeenCalledTimes(1);
+
+    await act(async () => resolveInitial([snapshot]));
+    await waitFor(() => expect(fetchSnapshots).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(view.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("63"));
     view.unmount();
   });
 

@@ -239,7 +239,13 @@ export default function App() {
     let cleanup: () => void = () => {};
     void listenDesktopEvents({
       onPreferences: (value) => { setPreferences({ ...DEFAULT_PREFS, ...value, language: normalizeLanguage(value.language), paletteColors: normalizePaletteColors(value.paletteColors) }); setOperationError(null); },
-      onRefresh: (mode) => void refresh(mode),
+      onRefresh: (mode) => {
+        if (mode === "account-relogin") {
+          void refreshAfterAccountSwitch();
+          return;
+        }
+        void refresh(mode);
+      },
       onFocusLost: () => {
         hoveredRef.current = false;
         setHovered(false);

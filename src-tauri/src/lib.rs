@@ -34,7 +34,7 @@ struct AppState {
     preferences_path: PathBuf,
     fetch_lock: tokio::sync::Mutex<()>,
     snapshot_cache: Mutex<Option<(Instant, Vec<ProviderSnapshot>)>>,
-    account_quota_cache: Mutex<HashMap<String, (Instant, AccountWeeklyQuota)>>,
+    account_quota_cache: Mutex<HashMap<String, (u64, Instant, AccountWeeklyQuota)>>,
     account_generation: AtomicU64,
     token_usage_cache: Arc<Mutex<token_usage::TokenUsageCache>>,
     palette_generation: AtomicU64,
@@ -48,6 +48,14 @@ const INACTIVE_ACCOUNT_QUOTA_TTL: Duration = Duration::from_secs(5 * 60);
 
 fn inactive_account_quota_is_fresh(updated_at: Instant) -> bool {
     updated_at.elapsed() < INACTIVE_ACCOUNT_QUOTA_TTL
+}
+
+fn inactive_account_quota_cache_is_current(
+    cached_generation: u64,
+    current_generation: u64,
+    updated_at: Instant,
+) -> bool {
+    cached_generation == current_generation && inactive_account_quota_is_fresh(updated_at)
 }
 
 struct AccountLoginTask {
@@ -301,39 +309,64 @@ async fn get_account_weekly_quotas(
             continue;
         }
 
+        let current_generation = state.account_generation.load(Ordering::SeqCst);
         let cached = state
             .account_quota_cache
             .lock()
             .ok()
             .and_then(|cache| cache.get(&profile_id).cloned())
-            .filter(|(updated_at, _)| inactive_account_quota_is_fresh(*updated_at))
-            .map(|(_, quota)| quota);
+            .filter(|(generation, updated_at, _)| {
+                inactive_account_quota_cache_is_current(
+                    *generation,
+                    current_generation,
+                    *updated_at,
+                )
+            })
+            .map(|(_, _, quota)| quota);
         if let Some(cached) = cached {
             quotas.push(cached);
             continue;
         }
 
-        let credentials = state
-            .account_vault
-            .lock()
-            .map_err(|_| "Account storage is busy.".to_string())?
-            .read_profile_credentials(&profile_id);
-        let quota = match credentials {
-            Ok(raw) => weekly_quota_from_snapshot(
-                profile_id.clone(),
-                codex::fetch_snapshot_from_bytes(&state.client, &raw).await,
-            ),
-            Err(message) => AccountWeeklyQuota {
-                profile_id: profile_id.clone(),
-                remaining_percent: None,
-                status: "signed_out".into(),
-                message: Some(message),
-            },
-        };
-        if let Ok(mut cache) = state.account_quota_cache.lock() {
-            cache.insert(profile_id, (Instant::now(), quota.clone()));
+        const MAX_CREDENTIAL_CHANGES_DURING_FETCH: usize = 3;
+        let mut refreshed = None;
+        for _ in 0..MAX_CREDENTIAL_CHANGES_DURING_FETCH {
+            let generation = state.account_generation.load(Ordering::SeqCst);
+            let credentials = state
+                .account_vault
+                .lock()
+                .map_err(|_| "Account storage is busy.".to_string())?
+                .read_profile_credentials(&profile_id);
+            let quota = match credentials {
+                Ok(raw) => weekly_quota_from_snapshot(
+                    profile_id.clone(),
+                    codex::fetch_snapshot_from_bytes(&state.client, &raw).await,
+                ),
+                Err(message) => AccountWeeklyQuota {
+                    profile_id: profile_id.clone(),
+                    remaining_percent: None,
+                    status: "signed_out".into(),
+                    message: Some(message),
+                },
+            };
+            if generation != state.account_generation.load(Ordering::SeqCst) {
+                continue;
+            }
+            if let Ok(mut cache) = state.account_quota_cache.lock() {
+                cache.insert(
+                    profile_id.clone(),
+                    (generation, Instant::now(), quota.clone()),
+                );
+            }
+            refreshed = Some(quota);
+            break;
         }
-        quotas.push(quota);
+        quotas.push(refreshed.unwrap_or_else(|| AccountWeeklyQuota {
+            profile_id,
+            remaining_percent: None,
+            status: "unavailable".into(),
+            message: Some("Account changed repeatedly while quota was refreshing.".into()),
+        }));
     }
     Ok(quotas)
 }
@@ -581,6 +614,7 @@ fn poll_account_login(
     match import {
         Ok(view) => {
             if let Some(profile_id) = task.replace_profile_id.as_deref() {
+                state.account_generation.fetch_add(1, Ordering::SeqCst);
                 if let Ok(mut cache) = state.account_quota_cache.lock() {
                     cache.remove(profile_id);
                 }
@@ -1346,6 +1380,16 @@ mod account_quota_tests {
         ));
         assert!(!inactive_account_quota_is_fresh(
             Instant::now() - Duration::from_secs(300)
+        ));
+        assert!(inactive_account_quota_cache_is_current(
+            7,
+            7,
+            Instant::now()
+        ));
+        assert!(!inactive_account_quota_cache_is_current(
+            6,
+            7,
+            Instant::now()
         ));
     }
 }

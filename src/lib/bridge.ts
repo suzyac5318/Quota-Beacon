@@ -8,7 +8,11 @@ export interface PaletteSessionPayload {
   colors: string[];
 }
 
-export type RefreshRequestMode = "auto" | "manual";
+export type RefreshRequestMode = "auto" | "manual" | "account-relogin";
+
+export function normalizeRefreshRequestMode(value: unknown): RefreshRequestMode {
+  return value === "manual" || value === "account-relogin" ? value : "auto";
+}
 
 const mockSnapshot: ProviderSnapshot = {
   provider: "codex",
@@ -206,7 +210,7 @@ export async function listenDesktopEvents(handlers: {
   const { listen } = await import("@tauri-apps/api/event");
   const unlistenPreferences = await listen<WidgetPreferences>("preferences-changed", (event) => handlers.onPreferences(event.payload));
   const unlistenRefresh = await listen<RefreshRequestMode>("refresh-requested", (event) => {
-    handlers.onRefresh(event.payload === "manual" ? "manual" : "auto");
+    handlers.onRefresh(normalizeRefreshRequestMode(event.payload));
   });
   const unlistenFocusLost = await listen("widget-focus-lost", handlers.onFocusLost);
   const unlistenConversationTokenUsage = await listen<ConversationTokenUsage>("conversation-token-usage", (event) => handlers.onConversationTokenUsage(event.payload));
