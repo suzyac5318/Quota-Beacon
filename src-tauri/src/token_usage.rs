@@ -38,6 +38,7 @@ struct CachedSessionFile {
 #[derive(Default)]
 pub struct TokenUsageCache {
     files: HashMap<PathBuf, CachedSessionFile>,
+    sessions: HashMap<String, SessionUsage>,
 }
 
 fn usage_roots(home: &Path) -> [PathBuf; 3] {
@@ -217,6 +218,23 @@ fn add_usage(total: &mut TokenUsageSummary, usage: &SessionUsage) {
     total.total_tokens = total.total_tokens.saturating_add(usage.total_tokens);
 }
 
+fn retain_greatest_session_usage(
+    sessions: &mut HashMap<String, SessionUsage>,
+    usage: &SessionUsage,
+) {
+    if usage.total_tokens == 0 {
+        return;
+    }
+    sessions
+        .entry(usage.session_id.clone())
+        .and_modify(|current| {
+            if usage.total_tokens > current.total_tokens {
+                *current = usage.clone();
+            }
+        })
+        .or_insert_with(|| usage.clone());
+}
+
 fn scan_home(cache: &Mutex<TokenUsageCache>, home: &Path) -> Result<TokenUsageSummary, String> {
     let roots = usage_roots(home);
     if roots.iter().all(|root| !root.exists()) {
@@ -239,27 +257,21 @@ fn scan_home(cache: &Mutex<TokenUsageCache>, home: &Path) -> Result<TokenUsageSu
         }
     }
 
-    let mut sessions: HashMap<String, SessionUsage> = HashMap::new();
-    for cached in cache.files.values() {
-        if cached.usage.total_tokens == 0 {
-            continue;
-        }
-        sessions
-            .entry(cached.usage.session_id.clone())
-            .and_modify(|current| {
-                if cached.usage.total_tokens > current.total_tokens {
-                    *current = cached.usage.clone();
-                }
-            })
-            .or_insert_with(|| cached.usage.clone());
+    let refreshed_sessions: Vec<SessionUsage> = cache
+        .files
+        .values()
+        .map(|cached| cached.usage.clone())
+        .collect();
+    for usage in &refreshed_sessions {
+        retain_greatest_session_usage(&mut cache.sessions, usage);
     }
 
     let mut summary = TokenUsageSummary {
-        session_count: sessions.len() as u64,
+        session_count: cache.sessions.len() as u64,
         updated_at: chrono::Utc::now().to_rfc3339(),
         ..TokenUsageSummary::default()
     };
-    for usage in sessions.values() {
+    for usage in cache.sessions.values() {
         add_usage(&mut summary, usage);
     }
     Ok(summary)
@@ -305,11 +317,9 @@ pub fn scan_conversation(
     }
     let total_tokens = cache.lock().ok().and_then(|cache| {
         cache
-            .files
-            .values()
-            .filter(|cached| cached.usage.session_id == conversation_id)
-            .map(|cached| cached.usage.total_tokens)
-            .max()
+            .sessions
+            .get(conversation_id)
+            .map(|usage| usage.total_tokens)
             .filter(|total| *total > 0)
     });
     ConversationTokenUsage {
@@ -370,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_all_time_usage_when_session_files_move_to_session_archive() {
+    fn keeps_all_time_usage_through_an_archive_migration_gap() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after the Unix epoch")
@@ -388,12 +398,18 @@ mod tests {
         let cache = Mutex::new(TokenUsageCache::default());
         let before = scan_home(&cache, &home).expect("initial history scan should succeed");
 
+        let archived_contents = fs::read(&original).expect("session log should be readable");
+        fs::remove_file(&original).expect("session log should leave the active directory");
+        let during = scan_home(&cache, &home).expect("migration gap should retain history");
+
         fs::create_dir_all(&archived).expect("session archive should be created");
-        fs::rename(&original, archived.join("session.jsonl"))
-            .expect("session log should move into the archive");
+        fs::write(archived.join("session.jsonl"), archived_contents)
+            .expect("session log should enter the archive");
         let after = scan_home(&cache, &home).expect("archived history scan should succeed");
 
         assert_eq!(before.total_tokens, 270);
+        assert_eq!(during.total_tokens, before.total_tokens);
+        assert_eq!(during.session_count, before.session_count);
         assert_eq!(after.total_tokens, before.total_tokens);
         assert_eq!(after.session_count, before.session_count);
 
