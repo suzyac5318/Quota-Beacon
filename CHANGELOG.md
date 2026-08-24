@@ -2,6 +2,15 @@
 
 本文件记录本仓库可核实的版本与开发里程碑。未创建 Git 提交或标签的工作统一标记为“未发布”，不追溯虚构版本号。
 
+## 1.10.3 — 2026-08-24
+
+### 产品线隔离修复
+
+- Windows 自启动改用平台中性的插件 Builder，应用源码不再引用 `MacosLauncher`，并移除未使用的 macOS `.icns` 资源。
+- 提交规范增加明确的启用起点，首次批量迁移时不再错误校验旧版无平台前缀提交；当前及后续 Windows 提交仍强制使用 `windows-` 前缀。
+- Windows Release 标题从 `windows-v<版本>` 正确转换为 `Quota Beacon Windows v<版本>`。
+- 产品线预检新增 README 版本同步、Mac 图标、Mac 自启动符号和 `security-framework` 拦截。
+
 ## 1.10.2 — 2026-08-24
 
 ### 产品线隔离

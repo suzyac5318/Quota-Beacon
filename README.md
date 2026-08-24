@@ -6,7 +6,7 @@
 
 Quota Beacon Windows 是一款独立维护、local-first 的 Tauri 桌面悬浮工具。它读取 Windows 本机已有的 Codex Desktop 登录状态，以悬浮卡片展示真实额度、重置时间、本机 Token 汇总和可定制的额度主题。
 
-> 当前 Windows 版本：`1.10.1`
+> 当前 Windows 版本：`1.10.3`
 >
 > Quota Beacon 是非官方社区项目，与 OpenAI 不存在隶属、认可或赞助关系。
 

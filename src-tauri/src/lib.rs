@@ -25,7 +25,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, State, WindowEvent,
 };
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_window_state::Builder as WindowStateBuilder;
 
 struct AppState {
@@ -1292,10 +1292,7 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
-        .plugin(tauri_plugin_autostart::init(
-            MacosLauncher::LaunchAgent,
-            None,
-        ))
+        .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(
             WindowStateBuilder::default()
                 .with_denylist(&["palette", "palette-editor", "account-switcher"])

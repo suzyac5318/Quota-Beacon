@@ -90,10 +90,11 @@ jobs:
           test -f release-assets/quota-beacon-windows-unsigned.zip
           test -f release-assets/quota-beacon-windows-unsigned.zip.sha256
           (cd release-assets && sha256sum --check quota-beacon-windows-unsigned.zip.sha256)
+          echo "RELEASE_NAME=Quota Beacon Windows ${GITHUB_REF_NAME#windows-}" >> "$GITHUB_ENV"
       - name: Create draft Windows release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          name: Quota Beacon Windows ${{ github.ref_name }}
+          name: ${{ env.RELEASE_NAME }}
           files: |
             release-assets/quota-beacon-windows-unsigned.zip
             release-assets/quota-beacon-windows-unsigned.zip.sha256

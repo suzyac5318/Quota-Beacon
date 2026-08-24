@@ -63,6 +63,7 @@ const cargoVersion = cargoToml.match(/\[package\][\s\S]*?^version\s*=\s*"([^"]+)
 const cargoLockVersion = readText("src-tauri/Cargo.lock").match(
   /\[\[package\]\]\s+name\s*=\s*"quota-beacon"\s+version\s*=\s*"([^"]+)"/m,
 )?.[1];
+const readmeVersion = readText("README.md").match(/> 当前 Windows 版本：`([^`]+)`/)?.[1];
 const versionSources = {
   VERSION: version,
   "package.json": packageVersion,
@@ -70,6 +71,7 @@ const versionSources = {
   "src-tauri/Cargo.toml": cargoVersion,
   "src-tauri/Cargo.lock": cargoLockVersion,
   "src-tauri/tauri.conf.json": tauriConfig.version,
+  "README.md": readmeVersion,
 };
 for (const [source, sourceVersion] of Object.entries(versionSources)) {
   if (sourceVersion !== version) {
@@ -124,6 +126,18 @@ if (identity.productLine === "macos") {
   }
   if (!readText("src-tauri/src/account_vault.rs").includes("CryptProtectData")) {
     fail("Windows DPAPI account-vault implementation is missing.");
+  }
+  if (!identity.commitPolicyStart) {
+    fail("Windows commitPolicyStart is missing.");
+  }
+  if (existsSync(join(repositoryRoot, "src-tauri/icons/icon.icns"))) {
+    fail("macOS icon.icns must not exist on the Windows product line.");
+  }
+  if (readText("src-tauri/src/lib.rs").includes("MacosLauncher")) {
+    fail("Windows application source must not reference MacosLauncher.");
+  }
+  if (cargoToml.includes("security-framework")) {
+    fail("Windows Cargo dependencies must not include macOS security-framework.");
   }
 } else {
   fail(`unsupported product line ${identity.productLine}.`);

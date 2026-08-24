@@ -1,6 +1,6 @@
 [package]
 name = "quota-beacon"
-version = "1.10.2"
+version = "1.10.3"
 description = "A private, local-first floating monitor for Codex usage limits"
 authors = ["Quota Beacon contributors"]
 license = "MIT"

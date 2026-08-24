@@ -43,9 +43,28 @@ if (explicitSubject) {
   const head = argumentValue("--head") ?? "HEAD";
   const usableBase = base && !/^0+$/.test(base);
   try {
-    subjects = usableBase
-      ? git("log", "--format=%s", `${base}..${head}`).split(/\r?\n/).filter(Boolean)
-      : [git("log", "-1", "--format=%s", head)];
+    let range;
+    if (!usableBase) {
+      range = head;
+    } else {
+      const policyStart = identity.commitPolicyStart;
+      if (!policyStart) {
+        fail("PRODUCT_LINE.json is missing commitPolicyStart.");
+      }
+      git("merge-base", "--is-ancestor", policyStart, head);
+      try {
+        git("merge-base", "--is-ancestor", policyStart, base);
+        range = `${base}..${head}`;
+      } catch {
+        try {
+          git("merge-base", "--is-ancestor", base, policyStart);
+          range = `${policyStart}^..${head}`;
+        } catch {
+          fail("base and head do not share the Windows commit-policy lineage.");
+        }
+      }
+    }
+    subjects = git("log", "--format=%s", range).split(/\r?\n/).filter(Boolean);
   } catch (error) {
     fail(`unable to read commit range: ${error.message}`);
   }

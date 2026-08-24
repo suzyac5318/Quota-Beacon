@@ -5,6 +5,7 @@
   "allowedBranchPrefixes": ["codex/windows-"],
   "tagPrefix": "windows-v",
   "commitPrefix": "windows-",
+  "commitPolicyStart": "8a2372375b29906d2b4890897b4d84dc6d143742",
   "releaseTitlePrefix": "Quota Beacon Windows ",
   "releaseAssetAllowlist": [
     "quota-beacon-windows-unsigned.zip",
