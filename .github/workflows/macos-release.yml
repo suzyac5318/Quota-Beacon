@@ -71,6 +71,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           name: ${{ env.RELEASE_NAME }}
+          target_commitish: macos
           files: |
             release-assets/quota-beacon-macos-universal-ad-hoc.dmg
             release-assets/quota-beacon-macos-universal-ad-hoc.dmg.sha256
