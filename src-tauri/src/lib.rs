@@ -1,7 +1,6 @@
 mod account_quota;
 mod account_vault;
 mod codex;
-mod codex_overlay;
 mod models;
 mod token_usage;
 
@@ -1509,7 +1508,7 @@ pub fn run() {
                 account_quota_state: Mutex::new(account_quota::AccountQuotaState::default()),
                 account_window_generation: AtomicU64::new(0),
                 account_generation: AtomicU64::new(0),
-                token_usage_cache: Arc::clone(&token_usage_cache),
+                token_usage_cache,
                 palette_generation: AtomicU64::new(0),
                 account_vault: Mutex::new(account_vault::AccountVault::load(accounts_root)),
                 account_switch_lock: tokio::sync::Mutex::new(()),
@@ -1517,7 +1516,6 @@ pub fn run() {
                 account_login_results: Mutex::new(HashMap::new()),
                 account_login_root,
             });
-            codex_overlay::start(app.handle().clone(), token_usage_cache);
             if setup_tray(app).is_err() {
                 eprintln!("tray setup failed; enabling taskbar fallback");
                 if let Some(window) = app.get_webview_window("widget") {

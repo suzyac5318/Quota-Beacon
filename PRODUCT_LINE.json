@@ -5,6 +5,7 @@
   "allowedBranchPrefixes": ["codex/macos-"],
   "tagPrefix": "macos-v",
   "commitPrefix": "macos-",
+  "commitPolicyStart": "083b678b3df34ebaf069e35831d41fec586b2305",
   "releaseTitlePrefix": "Quota Beacon macOS ",
   "releaseAssetAllowlist": [
     "quota-beacon-macos-universal-ad-hoc.dmg",

@@ -2,6 +2,15 @@
 
 本文件记录本仓库可核实的版本与开发里程碑。未创建 Git 提交或标签的工作统一标记为“未发布”，不追溯虚构版本号。
 
+## macOS 1.9.12 — 2026-08-24
+
+### 产品线隔离修复
+
+- 移除在 macOS 上始终为空操作的 Windows `codex_overlay` 模块及其 `windows-sys` 直接依赖，Mac 应用源码不再加载 Win32 窗口枚举逻辑。
+- macOS 打包图标清单不再引用 Windows `.ico`，并移除 Windows ICO 与生成 schema；Keychain、Universal 构建和透明窗口配置保持不变。
+- 提交规范增加明确的启用起点，首次推送本地积累提交时不再错误校验规范启用前的提交标题。
+- 产品线预检新增 Windows overlay、Windows Cargo 依赖和源码引用拦截。
+
 ## macOS 1.9.11 — 2026-08-24
 
 ### 产品线提交与发布约束

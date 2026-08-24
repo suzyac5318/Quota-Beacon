@@ -115,6 +115,24 @@ if (identity.productLine === "macos") {
   if (existsSync(join(repositoryRoot, "src-tauri/src/window_material.rs"))) {
     fail("Windows window_material.rs must not exist on the macOS product line.");
   }
+  if (existsSync(join(repositoryRoot, "src-tauri/src/codex_overlay.rs"))) {
+    fail("Windows codex_overlay.rs must not exist on the macOS product line.");
+  }
+  if (cargoToml.includes("[target.'cfg(windows)'.dependencies]") || cargoToml.includes("windows-sys")) {
+    fail("macOS Cargo.toml must not contain Windows-only dependencies.");
+  }
+  if (readText("src-tauri/src/lib.rs").includes("codex_overlay")) {
+    fail("macOS application source must not reference the Windows codex overlay.");
+  }
+  if (existsSync(join(repositoryRoot, "src-tauri/icons/icon.ico"))) {
+    fail("Windows icon.ico must not exist on the macOS product line.");
+  }
+  if (existsSync(join(repositoryRoot, "src-tauri/gen/schemas/windows-schema.json"))) {
+    fail("Windows schema must not exist on the macOS product line.");
+  }
+  if (!identity.commitPolicyStart) {
+    fail("macOS commitPolicyStart is missing.");
+  }
 } else if (identity.productLine === "windows") {
   if (identity.tagPrefix !== "windows-v") {
     fail(`Windows tag prefix must be windows-v, not ${identity.tagPrefix}.`);
