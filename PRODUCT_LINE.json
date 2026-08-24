@@ -4,6 +4,14 @@
   "expectedBranch": "macos",
   "allowedBranchPrefixes": ["codex/macos-"],
   "tagPrefix": "macos-v",
+  "commitPrefix": "macos-",
+  "releaseTitlePrefix": "Quota Beacon macOS ",
+  "releaseAssetAllowlist": [
+    "quota-beacon-macos-universal-ad-hoc.dmg",
+    "quota-beacon-macos-universal-ad-hoc.dmg.sha256",
+    "quota-beacon-macos-universal-ad-hoc.zip",
+    "quota-beacon-macos-universal-ad-hoc.zip.sha256"
+  ],
   "nativeCredentialStore": "Keychain",
   "forbiddenNativeImplementations": ["DPAPI", "DWM", "Win32"]
 }

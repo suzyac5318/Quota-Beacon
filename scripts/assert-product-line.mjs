@@ -85,6 +85,21 @@ if (identity.productLine === "macos") {
   if (identity.tagPrefix !== "macos-v") {
     fail(`macOS tag prefix must be macos-v, not ${identity.tagPrefix}.`);
   }
+  if (identity.commitPrefix !== "macos-") {
+    fail(`macOS commit prefix must be macos-, not ${identity.commitPrefix}.`);
+  }
+  if (identity.releaseTitlePrefix !== "Quota Beacon macOS ") {
+    fail("macOS release title prefix must be 'Quota Beacon macOS '.");
+  }
+  const expectedAssets = [
+    "quota-beacon-macos-universal-ad-hoc.dmg",
+    "quota-beacon-macos-universal-ad-hoc.dmg.sha256",
+    "quota-beacon-macos-universal-ad-hoc.zip",
+    "quota-beacon-macos-universal-ad-hoc.zip.sha256",
+  ];
+  if (JSON.stringify(identity.releaseAssetAllowlist) !== JSON.stringify(expectedAssets)) {
+    fail(`macOS release assets must be exactly: ${expectedAssets.join(", ")}.`);
+  }
   if (identity.nativeCredentialStore !== "Keychain") {
     fail("macOS native credential store must be Keychain.");
   }
@@ -101,8 +116,8 @@ if (identity.productLine === "macos") {
     fail("Windows window_material.rs must not exist on the macOS product line.");
   }
 } else if (identity.productLine === "windows") {
-  if (identity.tagPrefix !== "v") {
-    fail(`Windows tag prefix must be v, not ${identity.tagPrefix}.`);
+  if (identity.tagPrefix !== "windows-v") {
+    fail(`Windows tag prefix must be windows-v, not ${identity.tagPrefix}.`);
   }
   if (identity.nativeCredentialStore !== "DPAPI") {
     fail("Windows native credential store must be DPAPI.");

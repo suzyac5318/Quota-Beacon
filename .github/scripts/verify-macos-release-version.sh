@@ -70,6 +70,11 @@ if [[ -n "$tag" ]]; then
       echo "Tag $tag points to $tag_commit, but checkout is $head_commit" >&2
       exit 1
     }
+    commit_subject="$(git -C "$root" log -1 --format=%s "$head_commit")"
+    [[ "$commit_subject" == "$tag:"* ]] || {
+      echo "Release commit must start with $tag:, got: $commit_subject" >&2
+      exit 1
+    }
     git -C "$root" merge-base --is-ancestor "$lineage_root" "$head_commit" || {
       echo "Tag commit is not descended from the macOS product-line root $lineage_root" >&2
       exit 1

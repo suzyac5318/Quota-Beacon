@@ -4,13 +4,13 @@
 
 Quota Beacon 是基于 React、TypeScript、Vite、Tauri 2 和 Rust 的 Windows/macOS 桌面悬浮工具。它读取本机 Codex Desktop 登录状态并查询真实额度服务，显示 5 小时额度、本周额度、重置时间和重置机会。
 
-本文件是本机 Quota Beacon 项目的产品线路由与开发规则。Windows 正式工作树位于 `C:\Users\AC\Documents\QuotaFloat\work\windows-main`，macOS 正式工作树位于 `C:\Users\AC\Documents\QuotaFloat`。
+本文件是本机 Quota Beacon 项目的产品线路由与开发规则。Windows 正式工作树位于 `C:\Users\AC\Documents\QuotaFloat\work\Windows`，macOS 正式工作树位于 `C:\Users\AC\Documents\QuotaFloat`。
 
 ## Product Line Identity And Default Routing
 
-- 本机默认开发产品线固定为 Windows。只要用户没有明确说“Mac”“macOS”或指定 Mac 分支/产物，就必须把“QuotaFloat”“继续开发”“修复”“优化”“同步功能”等泛称路由到 Windows 正式工作树 `work/windows-main`，不得读取、修改、测试、构建、提交或发布 Mac 基线。
-- Windows 正式线位于 `work/windows-main`；正式分支为 `main`，功能分支只能使用 `codex/windows-*`，正式版本和标签使用 `v*`。进入该工作树后，读取源码、修改、测试、构建、提交或发布前必须先执行 `npm run preflight:product-line -- --expect windows`。
-- 只有用户在当前任务中明确指定 Mac 或 macOS，才允许使用根工作树 `C:\Users\AC\Documents\QuotaFloat`。Mac 正式分支为 `macos`，功能分支只能使用 `codex/macos-*`，版本和标签固定使用 `macos-v*`；执行 Mac 任务前必须先运行 `npm run preflight:product-line -- --expect macos`。
+- 本机默认开发产品线固定为 Windows。只要用户没有明确说“Mac”“macOS”或指定 Mac 分支/产物，就必须把“QuotaFloat”“继续开发”“修复”“优化”“同步功能”等泛称路由到 Windows 正式工作树 `work/Windows`，不得读取、修改、测试、构建、提交或发布 Mac 基线。
+- Windows 正式线位于 `work/Windows`；正式分支为 `Windows`，功能分支只能使用 `codex/windows-*`，正式版本和标签使用 `windows-v*`，版本提交使用 `windows-v<版本>: <说明>`，GitHub Release 标题使用 `Quota Beacon Windows v<版本>` 且只能包含 Windows 资产。进入该工作树后，读取源码、修改、测试、构建、提交或发布前必须先执行 `npm run preflight:product-line -- --expect windows`。
+- 只有用户在当前任务中明确指定 Mac 或 macOS，才允许使用根工作树 `C:\Users\AC\Documents\QuotaFloat`。Mac 正式分支为 `macos`，功能分支只能使用 `codex/macos-*`，版本和标签固定使用 `macos-v*`；版本提交必须使用 `macos-v<版本>: <说明>`，其他提交使用 `macos-<类型>: <说明>`；GitHub Release 标题必须使用 `Quota Beacon macOS v<版本>` 且只能包含 macOS 资产。执行 Mac 任务前必须先运行 `npm run preflight:product-line -- --expect macos`。
 - 如果用户同时提到两条产品线但没有明确要求都修改，仍默认只修改 Windows，并把 Mac 视为只读参考；只有明确授权“双线开发”时才分别处理和验证两条线。
 - `PRODUCT_LINE.json` 是机器可读的平台身份；它必须与目标工作树、Git 分支、版本文件、原生配置和本文件一致。预检失败时立即停止，不得靠改分支名、跳过检查或修改身份文件绕过。
 - Windows 与 Mac 是完全独立的正式线。不得在两者之间 merge、rebase、cherry-pick 或整文件复制；跨线同步必须重新按目标平台实现并独立验证。

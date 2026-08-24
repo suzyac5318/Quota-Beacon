@@ -2,6 +2,14 @@
 
 本文件记录本仓库可核实的版本与开发里程碑。未创建 Git 提交或标签的工作统一标记为“未发布”，不追溯虚构版本号。
 
+## macOS 1.9.11 — 2026-08-24
+
+### 产品线提交与发布约束
+
+- macOS 产品身份新增 `macos-` 提交前缀、macOS Release 标题和四资产白名单，并纳入产品线预检。
+- GitHub CI 检查 `macos-v<版本>: ...` 与 `macos-<类型>: ...` 提交规范；Release 校验标签、版本、Mac 分支血缘和版本提交标题一致。
+- macOS Release 标题固定为 `Quota Beacon macOS v<版本>`，仅允许 DMG/ZIP 及各自 SHA-256；Windows 继续由独立 `Windows` 分支维护。
+
 ## macOS 1.9.10 — 2026-08-21
 
 ### README 版本同步保护
