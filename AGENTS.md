@@ -4,14 +4,14 @@
 
 Quota Beacon 是基于 React、TypeScript、Vite、Tauri 2 和 Rust 的 Windows/macOS 桌面悬浮工具。它读取本机 Codex Desktop 登录状态并查询真实额度服务，显示 5 小时额度、本周额度、重置时间和重置机会。
 
-本文件只适用于 Windows 正式工作树：`C:\Users\AC\Documents\QuotaFloat\work\windows-main`。
+本文件只适用于 Windows 正式工作树：`C:\Users\AC\Documents\QuotaFloat\work\Windows`。
 
 ## Product Line Identity
 
-- 当前产品线固定为 Windows；正式分支为 `main`，功能分支只能使用 `codex/windows-*`，版本和标签固定使用 `v*`。
+- 当前产品线固定为 Windows；正式分支为 `Windows`，功能分支只能使用 `codex/windows-*`，版本和标签固定使用 `windows-v*`。版本提交必须使用 `windows-v<版本>: <说明>`，其他提交使用 `windows-<类型>: <说明>`。GitHub Release 标题必须使用 `Quota Beacon Windows v<版本>`，且只能包含 Windows 资产。
 - 每次读取源码、修改、测试、提交或发布前，必须先执行 `npm run preflight:product-line -- --expect windows`。预检失败时立即停止，不得靠改分支名、跳过检查或修改身份文件绕过。
 - `PRODUCT_LINE.json` 是机器可读的平台身份；它必须与当前工作树、Git 分支、版本文件、Windows 原生配置和本文件一致。
-- macOS 正式线位于仓库的 `macos` 工作树，只能作为功能需求和交互语义参考。Windows 任务不得修改 Mac 工作树，不得把 `macos` merge、rebase、cherry-pick 或整文件复制到 `main`。
+- macOS 正式线位于仓库的 `macos` 工作树，只能作为功能需求和交互语义参考。Windows 任务不得修改 Mac 工作树，不得把 `macos` merge、rebase、cherry-pick 或整文件复制到 `Windows`。
 - macOS 的 Keychain、`macOSPrivateApi`、`macos-private-api`、Universal、DMG 和真机结论不得写入 Windows 实现或验收结论；对应能力必须使用 DPAPI、Win32/DWM、Windows 构建与真实 Windows 验证。
 - 如果用户没有明确目标平台，先确认目标产品线；“QuotaFloat”“继续改进”“同步功能”等泛称不授权同时修改两条正式线。
 
@@ -19,7 +19,7 @@ Quota Beacon 是基于 React、TypeScript、Vite、Tauri 2 和 Rust 的 Windows/
 
 - 项目长期保留三条相互独立的产品线：Windows 正式版、macOS 正式版和“个人版”。
 - 个人版以届时最新、稳定、已完成验收且工作区干净的 Windows 正式版提交或标签为初始基线；创建时必须记录准确的基线提交与标签。未经用户确认，不得把含未提交修改的工作区直接作为个人版基线。
-- 个人版必须放在独立本地目录和独立本地 Git 仓库中开发，不得直接使用或修改 Windows/macOS 正式版的 `main`、`macos` 等主线分支及其工作区。
+- 个人版必须放在独立本地目录和独立本地 Git 仓库中开发，不得直接使用或修改 Windows/macOS 正式版的 `Windows`、`macos` 等主线分支及其工作区。
 - 个人版仅供用户个人使用，永久禁止任何 GitHub 写入：不得执行 `git push`，不得创建远程分支、远程标签、PR、Release 或其他远端内容。个人版本地提交和本地标签可用于版本记录与回滚。
 - 个人版仓库不得配置可写 GitHub 推送目标；如需读取 Windows 正式版的新历史，只能使用明确的只读同步方式，并且每次把正式版变更同步到个人版前都要得到用户确认。
 - 个人版的功能和修改不得默认合并回 Windows 或 macOS 正式版；任何跨产品线同步都必须由用户单独明确授权，并说明同步方向和范围。

@@ -2,6 +2,16 @@
 
 本文件记录本仓库可核实的版本与开发里程碑。未创建 Git 提交或标签的工作统一标记为“未发布”，不追溯虚构版本号。
 
+## 1.10.2 — 2026-08-24
+
+### 产品线隔离
+
+- Windows 正式分支由 `main` 重命名为 `Windows`，机器可读身份、开发说明和发布命令同步更新。
+- Windows 标签和版本提交改用显式 `windows-v*` / `windows-v<版本>: ...`，不再创建无平台前缀的新标签或版本提交。
+- Windows CI 与 Release 删除 macOS runner、Universal/DMG 资产和 macOS 签名配置；Windows Release 只允许 Windows ZIP 与 SHA-256。
+- Windows Release 标题固定为 `Quota Beacon Windows v<版本>`，并验证标签版本、Windows 产品身份及 `Windows` 分支血缘。
+- macOS 继续使用独立 `macos` 分支、`macos-v*` 标签、macOS CI 与 macOS Release；Personal 继续禁止 GitHub 写入。
+
 ## 1.10.1 — 2026-08-24
 
 ### 修复

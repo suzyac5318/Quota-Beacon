@@ -1,9 +1,15 @@
 {
   "schemaVersion": 1,
   "productLine": "windows",
-  "expectedBranch": "main",
+  "expectedBranch": "Windows",
   "allowedBranchPrefixes": ["codex/windows-"],
-  "tagPrefix": "v",
+  "tagPrefix": "windows-v",
+  "commitPrefix": "windows-",
+  "releaseTitlePrefix": "Quota Beacon Windows ",
+  "releaseAssetAllowlist": [
+    "quota-beacon-windows-unsigned.zip",
+    "quota-beacon-windows-unsigned.zip.sha256"
+  ],
   "nativeCredentialStore": "DPAPI",
   "forbiddenNativeImplementations": ["Keychain", "macOSPrivateApi", "macos-private-api"]
 }

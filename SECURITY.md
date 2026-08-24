@@ -23,6 +23,6 @@ Do not include tokens, account IDs, raw backend responses, unredacted screenshot
 Before publishing a release, verify:
 
 - Source archives do not include local installers, build outputs, `.codex`, QA screenshots, or environment files.
-- Windows/macOS bundles are built by CI or a clean machine.
+- Windows bundles are built by Windows CI or a clean Windows machine; macOS artifacts are maintained only on the separate macOS product line.
 - Unsigned builds are clearly labeled as unsigned.
 - Signed releases are produced only with maintainer-controlled certificates and secrets.

@@ -1,9 +1,9 @@
-name: Release
+name: Windows Release
 
 on:
   push:
     tags:
-      - "v*"
+      - "windows-v*"
 
 permissions:
   contents: write
@@ -23,49 +23,55 @@ jobs:
             archive-name: quota-beacon-windows-unsigned.zip
             build-command: npm run tauri -- build
             artifact-path: src-tauri/target/release/bundle/*
-          - os: macos-latest
-            artifact-name: quota-beacon-macos-universal-ad-hoc
-            archive-name: quota-beacon-macos-universal-ad-hoc.zip
-            build-command: npm run tauri -- build --target universal-apple-darwin
-            artifact-path: src-tauri/target/universal-apple-darwin/release/bundle/*
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-      - name: Install macOS universal targets
-        if: runner.os == 'macOS'
-        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
       - run: npm ci
+      - name: Verify Windows tag, branch lineage, and product identity
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
+          $identity = Get-Content -LiteralPath PRODUCT_LINE.json -Raw | ConvertFrom-Json
+          if ($identity.productLine -ne "windows") { throw "Release source is not the Windows product line." }
+          if ($identity.expectedBranch -ne "Windows") { throw "Windows expectedBranch must be Windows." }
+          if ($identity.tagPrefix -ne "windows-v") { throw "Windows tagPrefix must be windows-v." }
+          if ($env:GITHUB_REF_NAME -ne "windows-v$version") { throw "Tag $env:GITHUB_REF_NAME does not match VERSION $version." }
+          $subject = git log -1 --format=%s
+          if ($subject -notlike "$env:GITHUB_REF_NAME`:*") { throw "Release commit must start with $env:GITHUB_REF_NAME`:" }
+          git fetch origin Windows:refs/remotes/origin/Windows --no-tags
+          git merge-base --is-ancestor HEAD origin/Windows
+          if ($LASTEXITCODE -ne 0) { throw "Tag commit is not on the Windows branch lineage." }
       - run: npm test
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: ${{ matrix.build-command }}
-      - name: Verify macOS bundle
-        if: runner.os == 'macOS'
-        shell: bash
-        run: .github/scripts/verify-macos-bundle.sh src-tauri/target/universal-apple-darwin/release/bundle
       - name: Archive bundle
         shell: pwsh
-        run: Compress-Archive -Path "${{ matrix.artifact-path }}" -DestinationPath "${{ matrix.archive-name }}" -Force
+        run: |
+          Compress-Archive -Path "${{ matrix.artifact-path }}" -DestinationPath "${{ matrix.archive-name }}" -Force
+          $hash = (Get-FileHash -LiteralPath "${{ matrix.archive-name }}" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  ${{ matrix.archive-name }}" | Set-Content -LiteralPath "${{ matrix.archive-name }}.sha256" -NoNewline
       - name: Collect release assets
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path release-assets -Force | Out-Null
           Copy-Item -LiteralPath "${{ matrix.archive-name }}" -Destination release-assets
-          if ($env:RUNNER_OS -eq "macOS") {
-            Get-ChildItem "src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg" | Copy-Item -Destination release-assets
-            Copy-Item -LiteralPath "quota-beacon-macos-universal-ad-hoc.sha256" -Destination release-assets
-          }
+          Copy-Item -LiteralPath "${{ matrix.archive-name }}.sha256" -Destination release-assets
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact-name }}
-          path: release-assets/*
+          path: |
+            release-assets/quota-beacon-windows-unsigned.zip
+            release-assets/quota-beacon-windows-unsigned.zip.sha256
           if-no-files-found: error
           retention-days: 90
 
@@ -75,13 +81,21 @@ jobs:
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          name: quota-beacon-windows-unsigned
           path: release-assets
-          merge-multiple: true
-      - name: List release assets
-        run: find release-assets -maxdepth 1 -type f -printf '%f\n' | sort
-      - name: Create draft release with both platforms
+      - name: Verify downloaded Windows release assets
+        shell: bash
+        run: |
+          test "$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" = "2"
+          test -f release-assets/quota-beacon-windows-unsigned.zip
+          test -f release-assets/quota-beacon-windows-unsigned.zip.sha256
+          (cd release-assets && sha256sum --check quota-beacon-windows-unsigned.zip.sha256)
+      - name: Create draft Windows release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          files: release-assets/*
+          name: Quota Beacon Windows ${{ github.ref_name }}
+          files: |
+            release-assets/quota-beacon-windows-unsigned.zip
+            release-assets/quota-beacon-windows-unsigned.zip.sha256
           draft: true
           generate_release_notes: true
