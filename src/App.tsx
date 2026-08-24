@@ -159,6 +159,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const loadPreferences = async () => {
+      let lastError: unknown = null;
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
           const value = await getPreferences();
@@ -167,11 +168,12 @@ export default function App() {
             setOperationError(null);
           }
           return;
-        } catch {
+        } catch (error) {
+          lastError = error;
           if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 300));
         }
       }
-      if (!cancelled) setOperationError("Unable to read settings. Defaults are in use.");
+      if (!cancelled) console.warn("Unable to read settings; continuing with defaults.", lastError);
     };
     void fetchCachedSnapshots().then((values) => {
       if (!cancelled && values.length > 0) {

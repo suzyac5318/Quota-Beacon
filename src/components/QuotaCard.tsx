@@ -140,7 +140,7 @@ export const QuotaCard = memo(function QuotaCard({
         </div>
 
         <div className="expanded-content">
-          {notice ? <p className="operation-notice" role="status">{notice}</p> : null}
+          {notice && !compact ? <p className="operation-notice" role="status">{notice}</p> : null}
           <header className="card-header quota-reveal quota-reveal--0">
             <div className="account-heading">
               <button

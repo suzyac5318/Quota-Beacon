@@ -56,6 +56,24 @@ describe("QuotaCard content layers", () => {
     expect(view.container.querySelector(".quota-card--compact")).toBeNull();
   });
 
+  it("does not render an operation notice inside the compact orb", () => {
+    const callbacks = {
+      onPrevious: vi.fn(),
+      onNext: vi.fn(),
+      onTogglePin: vi.fn(),
+      onLock: vi.fn(),
+      onLanguage: vi.fn(),
+      onDrag: vi.fn(),
+      onHover: vi.fn(),
+    };
+    const view = render(<QuotaCard snapshot={snapshot} preferences={preferences} providerCount={1} notice="Temporary failure" compact {...callbacks} />);
+
+    expect(view.container.querySelector(".operation-notice")).toBeNull();
+
+    view.rerender(<QuotaCard snapshot={snapshot} preferences={preferences} providerCount={1} notice="Temporary failure" compact={false} {...callbacks} />);
+    expect(view.getByText("Temporary failure")).not.toBeNull();
+  });
+
   it("uses a semantic account chip without starting a window drag", () => {
     const onAccount = vi.fn();
     const onDrag = vi.fn();

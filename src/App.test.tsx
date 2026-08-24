@@ -3,7 +3,7 @@
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { fetchSnapshots } from "./lib/bridge";
+import { fetchSnapshots, getPreferences } from "./lib/bridge";
 import type { ProviderSnapshot, WidgetPreferences } from "./types";
 
 const preferences: WidgetPreferences = {
@@ -75,8 +75,27 @@ vi.mock("./lib/bridge", () => ({
 describe("quota refresh coordination", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getPreferences).mockResolvedValue(preferences);
     accountHarness.handlers = null;
     accountHarness.desktopHandlers = null;
+  });
+
+  it("keeps a startup settings fallback out of the quota status UI", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(fetchSnapshots).mockResolvedValueOnce([snapshot]);
+    vi.mocked(getPreferences).mockRejectedValue(new Error("temporary invoke failure"));
+
+    const view = render(<App />);
+    await waitFor(() => expect(getPreferences).toHaveBeenCalledTimes(3));
+
+    expect(view.container.querySelector(".quota-card--ok")).not.toBeNull();
+    expect(view.container.querySelector(".operation-notice")).toBeNull();
+    expect(warning).toHaveBeenCalledWith(
+      "Unable to read settings; continuing with defaults.",
+      expect.any(Error),
+    );
+    warning.mockRestore();
+    view.unmount();
   });
 
   it("coalesces focus refreshes and does not refresh quota on hover", async () => {

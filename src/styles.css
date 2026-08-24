@@ -129,6 +129,7 @@ button { font: inherit; }
 .quota-card--signed_out .collapsed-unavailable { color: #5f6f95; }
 .expanded-content { padding: 30px 30px 27px; }
 .quota-card--compact .expanded-content { pointer-events: none; }
+.quota-card--compact .operation-notice { display: none; }
 .card-header { min-height: 48px; display: flex; align-items: flex-start; justify-content: space-between; cursor: move; }
 .account-heading { display: grid; justify-items: start; }
 .account-chip { max-width: 162px; min-height: 25px; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; color: var(--card-foreground, #17191f); background: rgba(255,255,255,.1); box-shadow: inset 0 1px 0 rgba(255,255,255,.16); cursor: pointer; backdrop-filter: blur(8px); }
