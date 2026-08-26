@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshot, WidgetPreferences } from "../types";
 import { QuotaCard } from "./QuotaCard";
 
@@ -26,18 +26,21 @@ const preferences: WidgetPreferences = {
   paletteColors: ["#ff0000", "#ff9900", "#ffee00", "#aadd88", "#33aa66"],
 };
 
+const callbacks = {
+  onPrevious: vi.fn(),
+  onNext: vi.fn(),
+  onTogglePin: vi.fn(),
+  onLock: vi.fn(),
+  onLanguage: vi.fn(),
+  onDrag: vi.fn(),
+  onHover: vi.fn(),
+};
+
+afterEach(cleanup);
+
 describe("QuotaCard content layers", () => {
   it("keeps collapsed and expanded content mounted while the card reverses direction", () => {
     vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
-    const callbacks = {
-      onPrevious: vi.fn(),
-      onNext: vi.fn(),
-      onTogglePin: vi.fn(),
-      onLock: vi.fn(),
-      onLanguage: vi.fn(),
-      onDrag: vi.fn(),
-      onHover: vi.fn(),
-    };
     const conversationTokenUsage = { conversationId: "thread-1", totalTokens: 12_345 };
     const view = render(<QuotaCard snapshot={snapshot} preferences={preferences} providerCount={1} conversationTokenUsage={conversationTokenUsage} compact {...callbacks} />);
     const collapsed = view.container.querySelector(".collapsed-content");
@@ -78,5 +81,37 @@ describe("QuotaCard content layers", () => {
     fireEvent.click(button);
     expect(onAccount).toHaveBeenCalledTimes(1);
     expect(onDrag).not.toHaveBeenCalled();
+  });
+
+  it("shows the five-hour and weekly quotas together when both windows exist", () => {
+    const view = render(<QuotaCard snapshot={snapshot} preferences={preferences} providerCount={1} {...callbacks} />);
+    const card = view.container.querySelector(".quota-card");
+    const progress = view.getByRole("progressbar", { name: "5 小时额度剩余 72%" });
+
+    expect(card?.classList.contains("quota-card--dual-quota")).toBe(true);
+    expect(card?.classList.contains("quota-card--weekly-only")).toBe(false);
+    expect(view.getByText("5 小时剩余")).not.toBeNull();
+    expect(view.getByText(/^本周剩余/)).not.toBeNull();
+    expect(progress.getAttribute("aria-valuenow")).toBe("72");
+    expect(view.getByText("84")).not.toBeNull();
+  });
+
+  it("uses the weekly quota as the only quota for accounts without a five-hour window", () => {
+    const weeklyOnlySnapshot: ProviderSnapshot = {
+      ...snapshot,
+      plan: "PRO",
+      shortWindow: null,
+      weeklyWindow: { remainingPercent: 86, resetsAt: null, windowSeconds: 604_800 },
+    };
+    const view = render(<QuotaCard snapshot={weeklyOnlySnapshot} preferences={preferences} providerCount={1} {...callbacks} />);
+    const card = view.container.querySelector(".quota-card");
+    const progress = view.getByRole("progressbar", { name: "本周额度剩余 86%" });
+
+    expect(card?.classList.contains("quota-card--weekly-only")).toBe(true);
+    expect(card?.classList.contains("quota-card--dual-quota")).toBe(false);
+    expect(view.getByText("本周剩余")).not.toBeNull();
+    expect(view.queryByText("5 小时剩余")).toBeNull();
+    expect(progress.getAttribute("aria-valuenow")).toBe("86");
+    expect(view.queryByText(/^本周剩余 · 至/)).toBeNull();
   });
 });

@@ -87,6 +87,7 @@ export const QuotaCard = memo(function QuotaCard({
     ? t.unavailableStatus
     : primaryQuota?.kind === "weekly" ? t.weeklyAvailableLabel(primary) : t.availableLabel(primary);
   const weeklyOnly = primaryQuota?.kind === "weekly";
+  const dualQuota = primaryQuota?.kind === "short" && snapshot.weeklyWindow !== null;
   const weekly = snapshot.weeklyWindow ? clampPercent(snapshot.weeklyWindow.remainingPercent) : null;
   const staleAge = Date.now() - new Date(snapshot.updatedAt).getTime();
   const staleExpired = snapshot.status === "stale" && staleAge > 30 * 60_000;
@@ -120,7 +121,7 @@ export const QuotaCard = memo(function QuotaCard({
 
   return (
     <main
-      className={`quota-card quota-card--${snapshot.status}${compact ? " quota-card--compact" : ""}${hovered ? " quota-card--hovered" : ""}`}
+      className={`quota-card quota-card--${snapshot.status}${dualQuota ? " quota-card--dual-quota" : weeklyOnly ? " quota-card--weekly-only" : ""}${compact ? " quota-card--compact" : ""}${hovered ? " quota-card--hovered" : ""}`}
       style={primary === null ? undefined : quotaThemeStyle(primary, paletteColors)}
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}

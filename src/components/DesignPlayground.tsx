@@ -6,7 +6,7 @@ import { DEFAULT_PALETTE_COLORS } from "../lib/quotaTheme";
 const preview: ProviderSnapshot = {
   provider: "codex",
   displayName: "CODEX",
-  plan: "PRO",
+  plan: "PLUS",
   shortWindow: { remainingPercent: 74, resetsAt: new Date(Date.now() + 78 * 60_000).toISOString(), windowSeconds: 18_000 },
   weeklyWindow: { remainingPercent: 42, resetsAt: new Date(Date.now() + 3.2 * 86_400_000).toISOString(), windowSeconds: 604_800 },
   resetCredits: 1,
@@ -28,12 +28,13 @@ interface Values {
   warm: string;
 }
 
-type PreviewMode = number | "unavailable" | "stale" | "signed_out" | "orb";
+type PreviewMode = number | "weekly" | "unavailable" | "stale" | "signed_out" | "orb";
 
 const previewModes: Array<{ value: PreviewMode; label: string }> = [
   { value: 74, label: "74% Healthy" },
   { value: 35, label: "35% Caution" },
   { value: 8, label: "8% Critical" },
+  { value: "weekly", label: "Weekly only" },
   { value: "unavailable", label: "Unavailable" },
   { value: "stale", label: "Stale" },
   { value: "signed_out", label: "Signed out" },
@@ -50,7 +51,7 @@ function initialPreviewMode(): PreviewMode {
   if (mode === "healthy") return 74;
   if (mode === "caution") return 35;
   if (mode === "critical") return 8;
-  if (mode === "unavailable" || mode === "stale" || mode === "signed_out" || mode === "orb") return mode;
+  if (mode === "weekly" || mode === "unavailable" || mode === "stale" || mode === "signed_out" || mode === "orb") return mode;
   return 74;
 }
 
@@ -76,6 +77,9 @@ export function DesignPlayground() {
     if (mode === "orb") return preview;
     if (typeof mode === "number") {
       return { ...preview, shortWindow: preview.shortWindow ? { ...preview.shortWindow, remainingPercent: mode } : null };
+    }
+    if (mode === "weekly") {
+      return { ...preview, plan: "PRO", shortWindow: null };
     }
     if (mode === "stale") {
       return { ...preview, status: "stale", updatedAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(), message: "Refresh failed. Please try again later." };
