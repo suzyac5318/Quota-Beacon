@@ -20,7 +20,6 @@ interface Props {
   onHover: (hovered: boolean) => void;
   onRefresh?: () => void;
   isConsuming?: boolean;
-  notice?: string | null;
   initialShowCreditTip?: boolean;
   palettePreviewActive?: boolean;
   onPalettePreview?: () => void;
@@ -67,7 +66,6 @@ export const QuotaCard = memo(function QuotaCard({
   onHover,
   onRefresh,
   isConsuming = false,
-  notice = null,
   initialShowCreditTip = false,
   palettePreviewActive = false,
   onPalettePreview,
@@ -140,7 +138,6 @@ export const QuotaCard = memo(function QuotaCard({
         </div>
 
         <div className="expanded-content">
-          {notice && !compact ? <p className="operation-notice" role="status">{notice}</p> : null}
           <header className="card-header quota-reveal quota-reveal--0">
             <div className="account-heading">
               <button

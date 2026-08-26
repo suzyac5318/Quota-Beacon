@@ -17,6 +17,10 @@ const COLLAPSE_DELAY_MS = 120;
 const COLLAPSE_MORPH_MS = 280;
 type RefreshMode = "auto" | "manual";
 
+function reportOperationError(message: string, error?: unknown) {
+  console.warn(message, error);
+}
+
 export default function App() {
   const [snapshots, setSnapshots] = useState<ProviderSnapshot[]>([]);
   const [preferences, setPreferences] = useState(DEFAULT_PREFS);
@@ -24,7 +28,6 @@ export default function App() {
   const [hovered, setHovered] = useState(false);
   const [compact, setCompact] = useState(() => window.innerWidth <= 120 || window.innerHeight <= 120);
   const [consumingProviders, setConsumingProviders] = useState<Set<string>>(() => new Set());
-  const [operationError, setOperationError] = useState<string | null>(null);
   const [palettePercent, setPalettePercent] = useState<number | null>(null);
   const [paletteDraft, setPaletteDraft] = useState<string[] | null>(null);
   const [tokenUsage, setTokenUsage] = useState<TokenUsageSummary | null>(null);
@@ -86,7 +89,7 @@ export default function App() {
       collapseResizeTimer.current = window.setTimeout(() => {
         collapseResizeTimer.current = null;
         if (hoveredRef.current || paletteActive.current || accountActive.current) return;
-        void setWidgetExpanded(false).catch(() => setOperationError("Widget collapse failed."));
+        void setWidgetExpanded(false).catch((error) => reportOperationError("Widget collapse failed.", error));
       }, COLLAPSE_MORPH_MS);
     }, withHoverDelay ? COLLAPSE_DELAY_MS : 0);
   }, []);
@@ -165,7 +168,6 @@ export default function App() {
           const value = await getPreferences();
           if (!cancelled) {
             setPreferences({ ...DEFAULT_PREFS, ...value, language: normalizeLanguage(value.language), paletteColors: normalizePaletteColors(value.paletteColors) });
-            setOperationError(null);
           }
           return;
         } catch (error) {
@@ -214,7 +216,7 @@ export default function App() {
         setSnapshots([]);
         void refreshAfterAccountSwitch();
       },
-      onError: setOperationError,
+      onError: (message) => reportOperationError(message),
       onClosed: () => {
         accountActive.current = false;
         accountOpening.current = false;
@@ -234,9 +236,9 @@ export default function App() {
       if (target instanceof Element && target.closest(".account-chip")) return;
       accountClosing.current = true;
       if (accountOpening.current) return;
-      void closeAccountSwitcher().catch(() => {
+      void closeAccountSwitcher().catch((error) => {
         accountClosing.current = false;
-        setOperationError("Unable to close account manager.");
+        reportOperationError("Unable to close account manager.", error);
       });
     };
     document.addEventListener("pointerdown", closeFromWidgetInteraction, true);
@@ -247,7 +249,7 @@ export default function App() {
     let cancelled = false;
     let cleanup: () => void = () => {};
     void listenDesktopEvents({
-      onPreferences: (value) => { setPreferences({ ...DEFAULT_PREFS, ...value, language: normalizeLanguage(value.language), paletteColors: normalizePaletteColors(value.paletteColors) }); setOperationError(null); },
+      onPreferences: (value) => { setPreferences({ ...DEFAULT_PREFS, ...value, language: normalizeLanguage(value.language), paletteColors: normalizePaletteColors(value.paletteColors) }); },
       onRefresh: (mode) => {
         if (mode === "account-relogin") {
           void refreshAfterAccountSwitch();
@@ -261,18 +263,18 @@ export default function App() {
         if (paletteActive.current) {
           if (paletteClosing.current) return;
           paletteClosing.current = true;
-          void closePalettePreview().catch(() => {
+          void closePalettePreview().catch((error) => {
             paletteClosing.current = false;
-            setOperationError("Unable to close color preview.");
+            reportOperationError("Unable to close color preview.", error);
           });
           return;
         }
         if (accountActive.current) {
           if (accountClosing.current) return;
           accountClosing.current = true;
-          void closeAccountSwitcher().catch(() => {
+          void closeAccountSwitcher().catch((error) => {
             accountClosing.current = false;
-            setOperationError("Unable to close account manager.");
+            reportOperationError("Unable to close account manager.", error);
           });
           return;
         }
@@ -281,7 +283,7 @@ export default function App() {
       onConversationTokenUsage: setConversationTokenUsage,
     }).then((value) => {
       if (cancelled) value(); else cleanup = value;
-    }).catch(() => setOperationError("Desktop event listener failed to start."));
+    }).catch((error) => reportOperationError("Desktop event listener failed to start.", error));
     return () => { cancelled = true; cleanup(); };
   }, [refresh, scheduleCollapse]);
 
@@ -337,8 +339,7 @@ export default function App() {
   const savePreferences = useCallback((next: WidgetPreferences) => {
     const previous = preferences;
     setPreferences(next);
-    setOperationError(null);
-    void updatePreferences(next).catch(() => { setPreferences(previous); setOperationError("Settings could not be saved. Previous state restored."); });
+    void updatePreferences(next).catch((error) => { setPreferences(previous); reportOperationError("Settings could not be saved. Previous state restored.", error); });
   }, [preferences]);
 
   const handleHover = useCallback((value: boolean) => {
@@ -346,7 +347,7 @@ export default function App() {
     setHovered(value);
     if (value) {
       clearWidgetMotionTimers();
-      void setWidgetExpanded(true).catch(() => setOperationError("Widget expand failed."));
+      void setWidgetExpanded(true).catch((error) => reportOperationError("Widget expand failed.", error));
       hoverExpandTimer.current = window.setTimeout(() => {
         hoverExpandTimer.current = null;
         if (hoveredRef.current || paletteActive.current) {
@@ -365,9 +366,9 @@ export default function App() {
 
   const handlePalettePreview = useCallback(() => {
     const requestClose = () => {
-      void closePalettePreview().catch(() => {
+      void closePalettePreview().catch((error) => {
         paletteClosing.current = false;
-        setOperationError("Unable to close color preview.");
+        reportOperationError("Unable to close color preview.", error);
       });
     };
     if (paletteActive.current) {
@@ -389,20 +390,20 @@ export default function App() {
     void openPalettePreview(initial).then(() => {
       paletteOpening.current = false;
       if (paletteClosing.current) requestClose();
-    }).catch(() => {
+    }).catch((error) => {
       paletteActive.current = false;
       paletteOpening.current = false;
       paletteClosing.current = false;
       setPalettePercent(null);
-      setOperationError("Unable to open color preview.");
+      reportOperationError("Unable to open color preview.", error);
     });
   }, [clearWidgetMotionTimers, current]);
 
   const handleAccount = useCallback(() => {
     const requestClose = () => {
-      void closeAccountSwitcher().catch(() => {
+      void closeAccountSwitcher().catch((error) => {
         accountClosing.current = false;
-        setOperationError("Unable to close account manager.");
+        reportOperationError("Unable to close account manager.", error);
       });
     };
     if (accountActive.current) {
@@ -422,11 +423,11 @@ export default function App() {
       accountOpening.current = false;
       setAccountVault(vault);
       if (accountClosing.current) requestClose();
-    }).catch(() => {
+    }).catch((error) => {
       accountActive.current = false;
       accountOpening.current = false;
       accountClosing.current = false;
-      setOperationError("Unable to open account manager.");
+      reportOperationError("Unable to open account manager.", error);
     });
   }, [accountWindowTheme, clearWidgetMotionTimers]);
 
@@ -441,12 +442,11 @@ export default function App() {
       onNext={() => setActiveIndex((value) => (value + 1) % snapshots.length)}
       onTogglePin={() => savePreferences({ ...preferences, pinnedProvider: preferences.pinnedProvider ? null : current.provider })}
       onLanguage={() => savePreferences({ ...preferences, language: nextLanguage(language) })}
-      onLock={() => { setOperationError(null); void setAlwaysOnTop(!preferences.alwaysOnTop).then((value) => setPreferences({ ...DEFAULT_PREFS, ...value, language: normalizeLanguage(value.language) })).catch(() => setOperationError("Always-on-top toggle failed.")); }}
+      onLock={() => { void setAlwaysOnTop(!preferences.alwaysOnTop).then((value) => setPreferences({ ...DEFAULT_PREFS, ...value, language: normalizeLanguage(value.language) })).catch((error) => reportOperationError("Always-on-top toggle failed.", error)); }}
       onDrag={() => startDragging()}
       onHover={handleHover}
       onRefresh={() => refresh("manual")}
       isConsuming={consumingProviders.has(current.provider)}
-      notice={operationError}
       palettePreviewActive={palettePercent !== null}
       onPalettePreview={handlePalettePreview}
       accountAlias={accountVault?.profiles.find((profile) => profile.isActive)?.alias ?? null}

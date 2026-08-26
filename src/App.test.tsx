@@ -29,14 +29,14 @@ const snapshot: ProviderSnapshot = {
 };
 
 const accountHarness = vi.hoisted(() => ({
-  handlers: null as null | { onSwitched?: () => void; onClosed?: () => void },
+  handlers: null as null | { onSwitched?: () => void; onClosed?: () => void; onError?: (message: string) => void },
   desktopHandlers: null as null | { onRefresh: (mode: "auto" | "manual" | "account-relogin") => void; onFocusLost: () => void },
 }));
 
 vi.mock("./lib/accounts", () => ({
   closeAccountSwitcher: vi.fn(async () => {}),
   getAccountVault: vi.fn(async () => ({ profiles: [], activeProfileId: null, hasCurrentLogin: true, currentLoginSaved: false })),
-  listenAccountEvents: vi.fn(async (handlers: { onSwitched?: () => void; onClosed?: () => void }) => {
+  listenAccountEvents: vi.fn(async (handlers: { onSwitched?: () => void; onClosed?: () => void; onError?: (message: string) => void }) => {
     accountHarness.handlers = handlers;
     return () => {};
   }),
@@ -94,6 +94,22 @@ describe("quota refresh coordination", () => {
       "Unable to read settings; continuing with defaults.",
       expect.any(Error),
     );
+    warning.mockRestore();
+    view.unmount();
+  });
+
+  it("keeps internal operation failures out of the floating widget", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(fetchSnapshots).mockResolvedValueOnce([snapshot]);
+
+    const view = render(<App />);
+    await waitFor(() => expect(accountHarness.handlers).not.toBeNull());
+
+    act(() => accountHarness.handlers?.onError?.("Temporary account window failure"));
+
+    expect(view.container.querySelector(".operation-notice")).toBeNull();
+    expect(view.queryByText("Temporary account window failure")).toBeNull();
+    expect(warning).toHaveBeenCalledWith("Temporary account window failure", undefined);
     warning.mockRestore();
     view.unmount();
   });
