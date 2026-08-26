@@ -170,7 +170,7 @@ button { font: inherit; }
 @keyframes indicator-pulse { 50% { opacity: .62; transform: scale(.82); } }
 
 .metric-row { position: absolute; left: 30px; right: 30px; top: 66px; min-height: 78px; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
-.primary-metric { position: relative; top: -10px; padding-top: 12px; display: flex; align-items: flex-end; line-height: .82; letter-spacing: -.07em; }
+.primary-metric { position: relative; top: -16px; padding-top: 12px; display: flex; align-items: flex-end; line-height: .82; letter-spacing: -.07em; }
 .primary-metric span { font-size: var(--number-size, 64px); font-weight: 560; font-variant-numeric: tabular-nums; }
 .primary-metric small { margin: 0 0 5px 5px; font-size: 21px; font-weight: 700; letter-spacing: -.04em; }
 .token-total { position: relative; top: -4px; min-width: 102px; margin: 0 1px 1px 0; display: grid; justify-items: end; align-content: end; color: var(--card-muted, rgba(17,20,27,.76)); text-align: right; font-variant-numeric: tabular-nums; text-shadow: 0 1px 8px rgba(60,70,96,.14); }
@@ -186,18 +186,18 @@ button { font: inherit; }
 .progress span::after { content: ""; position: absolute; z-index: 2; top: 50%; right: 0; width: 2px; height: 2px; border-radius: 50%; background: rgba(255,255,255,.18); box-shadow: 0 0 7px 4px rgba(255,255,255,.82), 0 0 16px 8px rgba(255,255,255,.42); transform: translate(50%, -50%); }
 .reset-time { position: absolute; left: 30px; right: 30px; top: 185px; font-size: 12px; line-height: 16px; color: var(--card-muted, rgba(17,20,27,.52)); letter-spacing: .05em; }
 
-.card-footer { position: absolute; left: 30px; right: 30px; top: 211px; bottom: auto; display: flex; align-items: flex-end; justify-content: space-between; }
+.card-footer { position: absolute; left: 30px; right: 30px; top: 207px; bottom: auto; display: flex; align-items: flex-end; justify-content: space-between; }
 .weekly-metric p { font-size: 12px; line-height: 15px; font-weight: 300; letter-spacing: .08em; }
 .weekly-metric strong { display: block; margin-top: 4px; font-size: 30px; font-weight: 500; line-height: 30px; letter-spacing: -.04em; }
 .weekly-metric strong small { margin-left: 2px; font-size: 15px; font-weight: 400; }
 .weekly-metric span { display: block; margin: 0; font-size: 12px; font-weight: 500; color: var(--card-muted, rgba(17,20,27,.9)); }
-.reset-credit-row { position: relative; margin-top: 9px; display: flex; align-items: center; gap: 6px; line-height: 15px; }
+.reset-credit-row { position: relative; margin-top: 7px; display: flex; align-items: center; gap: 6px; line-height: 15px; }
 .quota-card--weekly-only .metric-row { top: 84px; }
 .quota-card--weekly-only .primary-metric, .quota-card--weekly-only .token-total { top: 0; }
 .quota-card--weekly-only .progress { top: 195px; }
 .quota-card--weekly-only .reset-time { top: 208px; line-height: normal; }
 .quota-card--weekly-only .card-footer { top: auto; bottom: 26px; }
-.quota-card--weekly-only .reset-credit-row { line-height: normal; }
+.quota-card--weekly-only .reset-credit-row { margin-top: 9px; line-height: normal; }
 .reset-credit-button { min-height: auto; padding: 0; border: 0; border-radius: 0; color: #234977; background: transparent; font-size: 12px; font-weight: 400; cursor: pointer; }
 .reset-credit-button:hover { color: #173760; text-decoration: underline; text-underline-offset: 2px; }
 .reset-credit-tip { position: absolute; left: 0; bottom: 25px; width: max-content; max-width: 190px; padding: 9px 11px; border: 1px solid rgba(255,255,255,.52); border-radius: 10px; color: #1f2935; background: rgba(255,255,255,.82); box-shadow: 0 12px 30px rgba(35,48,73,.14); backdrop-filter: blur(12px); font-size: 9px; font-weight: 500; line-height: 1.55; }
