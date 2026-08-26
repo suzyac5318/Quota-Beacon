@@ -1,5 +1,5 @@
 import { useMemo, useState, type CSSProperties } from "react";
-import type { ProviderSnapshot, WidgetPreferences } from "../types";
+import type { ConversationTokenUsage, ProviderSnapshot, TokenUsageSummary, WidgetPreferences } from "../types";
 import { QuotaCard, QuotaOrb } from "./QuotaCard";
 import { DEFAULT_PALETTE_COLORS } from "../lib/quotaTheme";
 
@@ -16,6 +16,16 @@ const preview: ProviderSnapshot = {
   message: null,
 };
 const preferences: WidgetPreferences = { locked: false, alwaysOnTop: true, pinnedProvider: "codex", autoRotateSeconds: 12, language: "en", paletteColors: [...DEFAULT_PALETTE_COLORS] };
+const previewTokenUsage: TokenUsageSummary = {
+  inputTokens: 0,
+  cachedInputTokens: 0,
+  outputTokens: 0,
+  reasoningOutputTokens: 0,
+  totalTokens: 4_700_000_000,
+  sessionCount: 0,
+  updatedAt: new Date().toISOString(),
+};
+const previewConversationTokenUsage: ConversationTokenUsage = { conversationId: "designer", totalTokens: 9_500_000 };
 
 interface Values {
   radius: number;
@@ -62,6 +72,10 @@ export function DesignPlayground() {
   const screenshotMode = params.has("shot");
   const shotKind = params.get("shot");
   const showCreditTip = params.has("creditTip");
+  const previewPreferences: WidgetPreferences = {
+    ...preferences,
+    language: params.get("lang") === "zh-CN" ? "zh-CN" : "en",
+  };
   const style = useMemo(() => ({
     "--card-radius": `${values.radius}px`,
     "--number-size": `${values.numberSize}px`,
@@ -104,7 +118,7 @@ export function DesignPlayground() {
         <div className="screenshot-stage screenshot-stage--states" style={style}>
           {[74, 35, 8].map((mode) => (
             <div className="design-card-frame" key={mode}>
-              <QuotaCard snapshot={makePreview(mode as PreviewMode)} preferences={preferences} providerCount={1} onPrevious={() => {}} onNext={() => {}} onTogglePin={() => {}} onLock={() => {}} onLanguage={() => {}} onDrag={() => {}} onHover={() => {}} isConsuming={mode === 35} />
+              <QuotaCard snapshot={makePreview(mode as PreviewMode)} preferences={previewPreferences} providerCount={1} onPrevious={() => {}} onNext={() => {}} onTogglePin={() => {}} onLock={() => {}} onLanguage={() => {}} onDrag={() => {}} onHover={() => {}} isConsuming={mode === 35} tokenUsage={previewTokenUsage} tokenUsageStatus="ready" conversationTokenUsage={previewConversationTokenUsage} />
             </div>
           ))}
         </div>
@@ -115,8 +129,8 @@ export function DesignPlayground() {
       <div className="screenshot-stage" style={style}>
         <div className={previewMode === "orb" ? "design-orb-frame" : "design-card-frame"}>
           {previewMode === "orb"
-            ? <QuotaOrb snapshot={activePreview} language="en" onDrag={() => {}} onHover={() => {}} />
-            : <QuotaCard snapshot={activePreview} preferences={preferences} providerCount={1} onPrevious={() => {}} onNext={() => {}} onTogglePin={() => {}} onLock={() => {}} onLanguage={() => {}} onDrag={() => {}} onHover={() => {}} initialShowCreditTip={showCreditTip} />}
+            ? <QuotaOrb snapshot={activePreview} language={previewPreferences.language} onDrag={() => {}} onHover={() => {}} />
+            : <QuotaCard snapshot={activePreview} preferences={previewPreferences} providerCount={1} onPrevious={() => {}} onNext={() => {}} onTogglePin={() => {}} onLock={() => {}} onLanguage={() => {}} onDrag={() => {}} onHover={() => {}} initialShowCreditTip={showCreditTip} tokenUsage={previewTokenUsage} tokenUsageStatus="ready" conversationTokenUsage={previewConversationTokenUsage} />}
         </div>
       </div>
     );
@@ -133,7 +147,7 @@ export function DesignPlayground() {
         <div className={previewMode === "orb" ? "design-orb-frame" : "design-card-frame"}>
           {previewMode === "orb"
             ? <QuotaOrb snapshot={activePreview} onDrag={() => {}} onHover={() => {}} />
-            : <QuotaCard snapshot={activePreview} preferences={preferences} providerCount={1} onPrevious={() => {}} onNext={() => {}} onTogglePin={() => {}} onLock={() => {}} onLanguage={() => {}} onDrag={() => {}} onHover={() => {}} />}
+            : <QuotaCard snapshot={activePreview} preferences={previewPreferences} providerCount={1} onPrevious={() => {}} onNext={() => {}} onTogglePin={() => {}} onLock={() => {}} onLanguage={() => {}} onDrag={() => {}} onHover={() => {}} tokenUsage={previewTokenUsage} tokenUsageStatus="ready" conversationTokenUsage={previewConversationTokenUsage} />}
         </div>
       </section>
       <aside className="design-controls">
