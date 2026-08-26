@@ -186,8 +186,10 @@ button { font: inherit; }
 .progress span::after { content: ""; position: absolute; z-index: 2; top: 50%; right: 0; width: 2px; height: 2px; border-radius: 50%; background: rgba(255,255,255,.18); box-shadow: 0 0 7px 4px rgba(255,255,255,.82), 0 0 16px 8px rgba(255,255,255,.42); transform: translate(50%, -50%); }
 .reset-time { position: absolute; left: 30px; right: 30px; top: 208px; font-size: 12px; color: var(--card-muted, rgba(17,20,27,.52)); letter-spacing: .05em; }
 .quota-card--dual-quota .metric-row { top: 80px; }
-.quota-card--dual-quota .progress { top: 189px; }
-.quota-card--dual-quota .reset-time { top: 200px; }
+.quota-card--dual-quota .primary-metric { position: relative; top: -18px; }
+.quota-card--dual-quota .token-total { position: relative; top: -8px; }
+.quota-card--dual-quota .progress { top: 180px; }
+.quota-card--dual-quota .reset-time { top: 193px; }
 
 .card-footer { position: absolute; left: 30px; right: 30px; bottom: 26px; display: flex; align-items: flex-end; justify-content: space-between; }
 .weekly-metric p { font-size: 12px; font-weight: 300; letter-spacing: .08em; }
