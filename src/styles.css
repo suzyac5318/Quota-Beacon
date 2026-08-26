@@ -126,7 +126,11 @@ button { font: inherit; }
 .quota-card--unavailable .collapsed-unavailable { color: #ff7653; }
 .quota-card--stale .collapsed-unavailable { color: #8f9094; }
 .quota-card--signed_out .collapsed-unavailable { color: #5f6f95; }
-.expanded-content { padding: 30px 30px 27px; }
+.expanded-content {
+  --content-inset-left: 26px;
+  --content-inset-right: 36px;
+  padding: 26px var(--content-inset-right) 32px var(--content-inset-left);
+}
 .quota-card--compact .expanded-content { pointer-events: none; }
 .card-header { min-height: 48px; display: flex; align-items: flex-start; justify-content: space-between; cursor: move; }
 .account-heading { display: grid; justify-items: start; }
@@ -169,7 +173,7 @@ button { font: inherit; }
 .usage-indicator--error i { background: #ff7653; box-shadow: 0 0 7px rgba(255,118,83,.48); }
 @keyframes indicator-pulse { 50% { opacity: .62; transform: scale(.82); } }
 
-.metric-row { position: absolute; left: 30px; right: 30px; top: 66px; min-height: 78px; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.metric-row { position: absolute; left: var(--content-inset-left); right: var(--content-inset-right); top: 62px; min-height: 78px; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
 .primary-metric { position: relative; top: -16px; padding-top: 12px; display: flex; align-items: flex-end; line-height: .82; letter-spacing: -.07em; }
 .primary-metric span { font-size: var(--number-size, 64px); font-weight: 560; font-variant-numeric: tabular-nums; }
 .primary-metric small { margin: 0 0 5px 5px; font-size: 21px; font-weight: 700; letter-spacing: -.04em; }
@@ -181,12 +185,12 @@ button { font: inherit; }
 .token-cumulative { display: grid; justify-items: end; }
 .token-total small { margin-top: 5px; font-size: 8px; font-weight: 650; line-height: 1; letter-spacing: .14em; text-transform: uppercase; }
 .token-total--loading strong, .token-total--unavailable strong { color: rgba(17,20,27,.46); letter-spacing: 0; }
-.progress { position: absolute; left: 30px; right: 30px; top: 172px; height: var(--progress-height, 6px); overflow: visible; border-radius: 999px; background: rgba(255,255,255,.2); box-shadow: inset 0 1px 2px rgba(64,76,102,.12); isolation: isolate; }
+.progress { position: absolute; left: var(--content-inset-left); right: var(--content-inset-right); top: 168px; height: var(--progress-height, 6px); overflow: visible; border-radius: 999px; background: rgba(255,255,255,.2); box-shadow: inset 0 1px 2px rgba(64,76,102,.12); isolation: isolate; }
 .progress span { position: relative; display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--progress-start, #397ae0), var(--progress-end, #89b7ff)); box-shadow: 0 0 14px color-mix(in srgb, var(--progress-start, #397ae0) 38%, transparent); transition: width .5s ease; }
 .progress span::after { content: ""; position: absolute; z-index: 2; top: 50%; right: 0; width: 2px; height: 2px; border-radius: 50%; background: rgba(255,255,255,.18); box-shadow: 0 0 7px 4px rgba(255,255,255,.82), 0 0 16px 8px rgba(255,255,255,.42); transform: translate(50%, -50%); }
-.reset-time { position: absolute; left: 30px; right: 30px; top: 185px; font-size: 12px; line-height: 16px; color: var(--card-muted, rgba(17,20,27,.52)); letter-spacing: .05em; }
+.reset-time { position: absolute; left: var(--content-inset-left); right: var(--content-inset-right); top: 181px; font-size: 12px; line-height: 16px; color: var(--card-muted, rgba(17,20,27,.52)); letter-spacing: .05em; }
 
-.card-footer { position: absolute; left: 30px; right: 30px; top: 207px; bottom: auto; display: flex; align-items: flex-end; justify-content: space-between; }
+.card-footer { position: absolute; left: var(--content-inset-left); right: var(--content-inset-right); top: 203px; bottom: auto; display: flex; align-items: flex-end; justify-content: space-between; }
 .weekly-metric p { font-size: 12px; line-height: 15px; font-weight: 300; letter-spacing: .08em; }
 .weekly-metric strong { display: block; margin-top: 4px; font-size: 30px; font-weight: 500; line-height: 30px; letter-spacing: -.04em; }
 .weekly-metric strong small { margin-left: 2px; font-size: 15px; font-weight: 400; }
@@ -196,7 +200,7 @@ button { font: inherit; }
 .quota-card--weekly-only .primary-metric, .quota-card--weekly-only .token-total { top: 0; }
 .quota-card--weekly-only .progress { top: 195px; }
 .quota-card--weekly-only .reset-time { top: 208px; line-height: normal; }
-.quota-card--weekly-only .card-footer { top: auto; bottom: 26px; }
+.quota-card--weekly-only .card-footer { top: auto; bottom: 32px; }
 .quota-card--weekly-only .reset-credit-row { margin-top: 9px; line-height: normal; }
 .reset-credit-button { min-height: auto; padding: 0; border: 0; border-radius: 0; color: #234977; background: transparent; font-size: 12px; font-weight: 400; cursor: pointer; }
 .reset-credit-button:hover { color: #173760; text-decoration: underline; text-underline-offset: 2px; }
