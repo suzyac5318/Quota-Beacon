@@ -14,13 +14,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "system-proxy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
@@ -29,7 +29,7 @@ tokio = { version = "1", features = ["macros", "sync"] }
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
   "Foundation",
   "Graphics_Effects",
   "System",
@@ -42,8 +42,8 @@ windows = { version = "0.61", features = [
   "Win32_System_WinRT_Composition",
   "Win32_System_WinRT_Graphics_Direct2D",
 ] }
-windows-core = "0.61"
-windows-numerics = "0.2"
+windows-core = "0.62"
+windows-numerics = "0.3"
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",
