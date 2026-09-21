@@ -45,7 +45,12 @@ if (explicitSubject) {
   try {
     let range;
     if (!usableBase) {
-      range = head;
+      const policyStart = identity.commitPolicyStart;
+      if (!policyStart) {
+        fail("PRODUCT_LINE.json is missing commitPolicyStart.");
+      }
+      git("merge-base", "--is-ancestor", policyStart, head);
+      range = `${policyStart}^..${head}`;
     } else {
       const policyStart = identity.commitPolicyStart;
       if (!policyStart) {
