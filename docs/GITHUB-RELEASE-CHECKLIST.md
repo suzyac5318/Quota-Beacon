@@ -68,3 +68,7 @@ git push origin windows-v1.10.2
 - GitHub Secrets 中的 Windows 签名配置。
 
 这些账号、证书和密码不能由代码生成，需要项目所有者申请或购买。
+
+## 免安装包内容
+
+运行 `npm run package:portable`，产物位于 `outputs/windows-v<版本>/`。ZIP 只包含 `Quota-Beacon.exe`、`README.txt`、`LICENSE` 和 `UPSTREAM-NOTICE.md`，不包含安装器或个人数据。命令总是先构建再校验版本、x64 架构和解压哈希；旧输出不会被覆盖。

@@ -23,7 +23,7 @@ npm run preflight:product-line -- --expect windows
 npm test
 npm run build
 cargo check --manifest-path src-tauri\Cargo.toml
-npm run tauri build -- --no-bundle
+npm run package:portable
 git diff --check
 ```
 
@@ -34,7 +34,7 @@ git push origin Windows
 git push origin windows-v1.10.2
 ```
 
-标签必须指向 `Windows` 分支历史，且标签版本必须与六个版本源一致。工作流只生成 Windows ZIP 和 SHA-256，并创建草稿 Release；发布草稿前还要检查 Windows 安装、启动、托盘、窗口交互和 SHA-256。
+标签必须指向 `Windows` 分支历史，且标签版本必须与六个版本源一致。工作流只生成 Windows ZIP 和 SHA-256，并创建草稿 Release；发布草稿前还要检查 Windows 免安装解压、启动、托盘、窗口交互和 SHA-256。
 
 ## 签名边界
 

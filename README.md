@@ -6,7 +6,7 @@
 
 Quota Beacon Windows 是一款独立维护、local-first 的 Tauri 桌面悬浮工具。它读取 Windows 本机已有的 Codex Desktop 登录状态，以悬浮卡片展示真实额度、重置时间、本机 Token 汇总和可定制的额度主题。
 
-> 当前 Windows 版本：`1.10.11`
+> 当前 Windows 版本：`1.10.13`
 >
 > Quota Beacon 是非官方社区项目，与 OpenAI 不存在隶属、认可或赞助关系。
 
@@ -27,7 +27,7 @@ Quota Beacon Windows 是一款独立维护、local-first 的 Tauri 桌面悬浮�
 
 | 平台 | 发布包 | 验证状态 |
 | --- | --- | --- |
-| Windows | unsigned ZIP/安装包 | Windows 11 实机验证 |
+| Windows | unsigned 免安装 ZIP | Windows 11 实机验证 |
 
 本分支只维护 Windows。macOS 使用独立的 `macos` 分支、`macos-v*` 标签、macOS CI 和 macOS Release，不从本分支构建或发布。
 
@@ -38,7 +38,7 @@ Quota Beacon Windows 是一款独立维护、local-first 的 Tauri 桌面悬浮�
 ### Windows 11
 
 1. 下载 `quota-beacon-windows-unsigned.zip` 并解压。
-2. 运行 ZIP 内的 Windows 安装包。
+2. 双击解压后的 `Quota-Beacon.exe`，无需安装或管理员权限。需要 Microsoft Edge WebView2 Runtime；缺少时请从 [Microsoft 官方页面](https://developer.microsoft.com/microsoft-edge/webview2/) 安装。设置和账号库仍保存在 Windows 用户数据目录，不随解压文件夹删除。
 3. 当前构建未签名，Windows 可能显示“未知发布者”或 SmartScreen 提示；请确认下载来源是本仓库 Release 后再继续。
 
 更多边界和已知限制见 [发布说明](docs/RELEASE.md) 与 [已知限制](docs/KNOWN-LIMITATIONS.md)。
@@ -63,7 +63,7 @@ npm run tauri dev
 浏览器开发模式只使用 mock 数据。桌面构建使用：
 
 ```bash
-npm run tauri -- build
+npm run package:portable
 ```
 
 贡献代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。不要提交本机凭据、`.codex`、`.env*`、个人截图、`node_modules`、构建输出或安装包。

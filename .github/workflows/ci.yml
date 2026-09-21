@@ -32,8 +32,8 @@ jobs:
         include:
           - os: windows-latest
             artifact-name: quota-beacon-windows-unsigned
-            build-command: npm run tauri -- build
-            artifact-path: src-tauri/target/release/bundle/**
+            build-command: npm run package:portable
+            artifact-path: outputs/windows-v*/quota-beacon-windows-unsigned.zip*
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

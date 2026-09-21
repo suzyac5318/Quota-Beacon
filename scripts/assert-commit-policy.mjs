@@ -24,7 +24,7 @@ if (identity.commitPrefix !== "windows-" || identity.tagPrefix !== "windows-v") 
 }
 
 const releasePattern = /^windows-v\d+\.\d+\.\d+: .+/;
-const maintenancePattern = /^windows-(feat|fix|docs|test|build|ci|chore|refactor|perf|style): .+/;
+const maintenancePattern = /^windows-(feat|fix|docs|test|build|ci|chore|refactor|perf|style|revert): .+/;
 const isAllowed = (subject) =>
   releasePattern.test(subject) || maintenancePattern.test(subject) || subject.startsWith("Merge ");
 

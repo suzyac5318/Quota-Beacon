@@ -11,7 +11,7 @@ Quota Beacon Windows is a local-first floating desktop widget for checking Codex
 
 1. Sign in to Codex Desktop on the same Windows machine.
 2. Verify the ZIP with the published SHA-256 file.
-3. Extract the ZIP and run the Windows installer.
+3. Extract the ZIP and run `Quota-Beacon.exe` directly; no installer or administrator rights are required. Microsoft Edge WebView2 Runtime is required. Settings remain in the Windows user data directory.
 4. Because the current build is unsigned, confirm the download came from this repository before accepting any SmartScreen prompt.
 
 ## Checks
@@ -20,5 +20,5 @@ Quota Beacon Windows is a local-first floating desktop widget for checking Codex
 - Frontend and Rust tests passed.
 - Web and Windows desktop builds passed.
 - Windows ZIP SHA-256 verified.
-- Windows installed-app smoke test completed or explicitly recorded as unverified.
+- Windows extracted-portable-app smoke test completed or explicitly recorded as unverified.
 - No macOS, Personal-edition, credential, or private artifacts are attached.

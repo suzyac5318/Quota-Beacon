@@ -1,11 +1,12 @@
 {
   "name": "quota-beacon",
   "private": true,
-  "version": "1.10.11",
+  "version": "1.10.13",
   "type": "module",
   "scripts": {
     "preflight:product-line": "node scripts/assert-product-line.mjs",
     "dev": "vite",
+    "package:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1",
     "build": "tsc && vite build",
     "test": "vitest run",
     "tauri": "tauri"

@@ -21,8 +21,7 @@ jobs:
           - os: windows-latest
             artifact-name: quota-beacon-windows-unsigned
             archive-name: quota-beacon-windows-unsigned.zip
-            build-command: npm run tauri -- build
-            artifact-path: src-tauri/target/release/bundle/*
+            build-command: npm run package:portable
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -54,18 +53,12 @@ jobs:
       - run: npm test
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: ${{ matrix.build-command }}
-      - name: Archive bundle
+      - name: Collect verified portable release assets
         shell: pwsh
         run: |
-          Compress-Archive -Path "${{ matrix.artifact-path }}" -DestinationPath "${{ matrix.archive-name }}" -Force
-          $hash = (Get-FileHash -LiteralPath "${{ matrix.archive-name }}" -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  ${{ matrix.archive-name }}" | Set-Content -LiteralPath "${{ matrix.archive-name }}.sha256" -NoNewline
-      - name: Collect release assets
-        shell: pwsh
-        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
           New-Item -ItemType Directory -Path release-assets -Force | Out-Null
-          Copy-Item -LiteralPath "${{ matrix.archive-name }}" -Destination release-assets
-          Copy-Item -LiteralPath "${{ matrix.archive-name }}.sha256" -Destination release-assets
+          Copy-Item -Path "outputs/windows-v$version/quota-beacon-windows-unsigned.zip*" -Destination release-assets
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact-name }}

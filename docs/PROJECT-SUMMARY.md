@@ -30,7 +30,7 @@ Quota Beacon 是一个独立维护的 Tauri 2 桌面悬浮窗，用本机 Codex 
 - `src/lib/snapshots.ts`：新旧 snapshot 合并与失败保留旧数据逻辑。
 - `src-tauri/src/codex.rs`：读取本地 Codex auth、拼接请求头、调用额度与 reset credits 接口、解析响应。
 - `src-tauri/src/lib.rs`：Tauri command、缓存锁、偏好持久化、托盘、窗口状态、锁定穿透。
-- `.github/workflows/release.yml`：只接受 Windows `v*` 标签并生成 Windows ZIP 与 SHA-256 草稿 Release。
+- `.github/workflows/windows-release.yml`：只接受 `windows-v*` 标签，生成 Windows 免安装 EXE ZIP 与 SHA-256 草稿 Release。
 
 ## 数据与安全边界
 
